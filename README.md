@@ -2,7 +2,6 @@
 **Cauvery Institute of Technology** (Affiliated to **Visvesvaraya Technological University - VTU**)  
 **Academic Year:** 2026–2027  
 **System Name:** College No-Due Clearance Management System  
-**Repository:** [https://github.com/hruthik-gowda-ht/No-Due-Clearance-System](https://github.com/hruthik-gowda-ht/No-Due-Clearance-System)
 
 ---
 
