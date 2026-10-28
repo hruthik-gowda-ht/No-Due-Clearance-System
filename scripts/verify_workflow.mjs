@@ -273,8 +273,23 @@ try {
 assert(facultyShortageBlocked, 'Faculty approval strictly blocked when attendance < 85%');
 
 // Test 6b: Eligible attendance approval (>= 85%)
-Engine.updateAcademicRecord(acadRec.id, 89.5, 'Condonation approved, attendance now 89.5%', faculty.id);
-const verifiedReq = Engine.verifyFacultyApproval(studentRequest.id, faculty.id, 'Academic verification approved. Attendance 89.5%.');
+const subList = Engine.getSubjectAttendanceForStudent(registeredStudent.id, studentRequest.id);
+for (const s of subList) {
+  Engine.recordSubjectAttendance({
+    subjectRecordId: s.id,
+    classesHeld: 50,
+    classesAttended: 45, // 90%
+    facultyId: s.faculty_id,
+    remarks: 'Condonation approved, attendance now 90%',
+  });
+  Engine.processSubjectTeacherDecision({
+    subjectRecordId: s.id,
+    facultyId: s.faculty_id,
+    decision: 'APPROVE',
+    remarks: 'Approved by subject teacher',
+  });
+}
+const verifiedReq = Engine.verifyFacultyApproval(studentRequest.id, faculty.id, 'Academic verification approved. Attendance 90%.');
 assert(verifiedReq.faculty_status === 'APPROVED', 'Faculty verification approved after meeting threshold');
 assert(verifiedReq.status === 'IN_REVIEW', 'Request transitions to IN_REVIEW for departmental clearances');
 

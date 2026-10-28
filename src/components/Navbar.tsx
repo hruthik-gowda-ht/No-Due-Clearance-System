@@ -231,19 +231,6 @@ export const Navbar: React.FC = () => {
                 )}
               </>
             )}
-
-            {/* Public Verification Link — accessible to everyone without login */}
-            <Link
-              to="/verify"
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
-                location.pathname.startsWith('/verify')
-                  ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'
-                  : 'text-emerald-400/80 hover:text-emerald-300 hover:bg-emerald-950/30'
-              }`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              Public Verification
-            </Link>
           </nav>
 
           {/* Right Controls: Authenticated Profile & Logout vs Unauthenticated Login/Register */}
@@ -440,13 +427,6 @@ export const Navbar: React.FC = () => {
                 </Link>
               )}
 
-              <Link
-                to="/verify"
-                className="block px-3 py-2 rounded-lg text-xs font-semibold text-emerald-400 hover:bg-emerald-950/30"
-              >
-                Public Verification
-              </Link>
-
               <button
                 type="button"
                 onClick={handleLogout}
@@ -458,12 +438,6 @@ export const Navbar: React.FC = () => {
             </>
           ) : (
             <>
-              <Link
-                to="/verify"
-                className="block px-3 py-2 rounded-lg text-xs font-semibold text-emerald-400 hover:bg-emerald-950/30"
-              >
-                Public Verification
-              </Link>
               <Link
                 to="/login"
                 className="block px-3 py-2 rounded-lg text-xs font-semibold text-slate-300 hover:bg-slate-800"

@@ -58,7 +58,7 @@ async function bootstrap() {
           email_confirm: true,
           user_metadata: {
             role: ADMIN_ROLE,
-            full_name: 'Institutional Administrator',
+            full_name: 'Dr. Srikantappa As',
             must_change_password: true,
           },
         });
@@ -73,7 +73,7 @@ async function bootstrap() {
           const { error: profErr } = await supabaseAdmin.from('profiles').upsert({
             id: newUser.user.id,
             role: ADMIN_ROLE,
-            full_name: 'Institutional Administrator',
+            full_name: 'Dr. Srikantappa As',
             email: ADMIN_EMAIL,
             staff_id: 'CIT-ADM-001',
             department: 'Central Institutional Administration',

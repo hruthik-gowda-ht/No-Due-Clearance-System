@@ -26,15 +26,32 @@ import {
   StaffRegistrationParams,
   StaffRoleRequest,
   VerificationStatus,
+  AuthorityType,
+  SubjectAttendanceRecord,
+  AttendanceStatusType,
+  Subject,
+  StaffSubjectAssignment,
+  StudentSubjectEnrollment,
+  RequestFacultyAssignment,
+  FacultyReviewTask,
+  SubjectApprovalStatus,
+  TeacherApprovalDecision,
 } from '../types/database';
 
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   PROFILES: 'cit_v2_profiles',
   CREDENTIALS: 'cit_v2_credentials',
   DEPARTMENTS: 'cit_v2_departments',
   ACADEMIC_PERIODS: 'cit_v2_academic_periods',
   SETTINGS: 'cit_v2_settings',
   ACADEMIC_RECORDS: 'cit_v2_academic_records',
+  SUBJECT_ATTENDANCE: 'cit_v2_subject_attendance',
+  TEACHER_APPROVAL_DECISIONS: 'cit_v2_teacher_approval_decisions',
+  SUBJECTS: 'cit_v2_subjects',
+  STAFF_SUBJECT_ASSIGNMENTS: 'cit_v2_staff_subject_assignments',
+  STUDENT_SUBJECT_ENROLLMENTS: 'cit_v2_student_subject_enrollments',
+  REQUEST_FACULTY_ASSIGNMENTS: 'cit_v2_request_faculty_assignments',
+  FACULTY_REVIEW_TASKS: 'cit_v2_faculty_review_tasks',
   PAYMENT_QRS: 'cit_v2_payment_qrs',
   REQUESTS: 'cit_v2_requests',
   CLEARANCE_ITEMS: 'cit_v2_clearance_items',
@@ -93,7 +110,7 @@ const SEED_PROFILES: UserProfile[] = [
   {
     id: 'usr-admin-01',
     role: 'admin',
-    full_name: 'Institutional Administrator',
+    full_name: 'Dr. Srikantappa As',
     email: 'admin@gmail.com',
     staff_id: 'CIT-ADM-001',
     department: 'Central Institutional Administration',
@@ -186,7 +203,7 @@ const SEED_AUDIT_LOGS: AuditLog[] = [
   {
     id: 'log-sys-init',
     user_id: 'usr-admin-01',
-    user_name: 'System Administrator',
+    user_name: 'Dr. Srikantappa As',
     user_role: 'admin',
     action: 'INITIALIZE_INSTITUTIONAL_REGISTRY',
     entity_type: 'system',
@@ -274,6 +291,12 @@ export function initializeEngine(): void {
     if (!sanitizedProfiles.some((p) => p.role === 'admin') && !deletedAdmins.includes('admin@gmail.com')) {
       sanitizedProfiles.unshift(SEED_PROFILES[0]);
     }
+    // Update admin full_name to Dr. Srikantappa As (replacing Dr. H. N. Suresh or any default name)
+    sanitizedProfiles.forEach((p) => {
+      if (p.role === 'admin' || p.full_name === 'Dr. H. N. Suresh' || p.full_name === 'H. N. Suresh') {
+        p.full_name = 'Dr. Srikantappa As';
+      }
+    });
     set(STORAGE_KEYS.PROFILES, sanitizedProfiles);
   }
 
@@ -328,7 +351,13 @@ let requestCounter = 125;
 export const Engine = {
   // Profiles & Auth
   getProfiles(): UserProfile[] {
-    return get<UserProfile[]>(STORAGE_KEYS.PROFILES, SEED_PROFILES);
+    const profiles = get<UserProfile[]>(STORAGE_KEYS.PROFILES, SEED_PROFILES);
+    return profiles.map((p) => {
+      if (p.role === 'admin' || p.full_name === 'Dr. H. N. Suresh' || p.full_name === 'H. N. Suresh') {
+        return { ...p, full_name: 'Dr. Srikantappa As' };
+      }
+      return p;
+    });
   },
 
   getProfileById(id: string): UserProfile | undefined {
@@ -466,9 +495,8 @@ export const Engine = {
     creds.push({ userId: newId, identifier: cleanEmail, passwordHash: params.password });
     set(STORAGE_KEYS.CREDENTIALS, creds);
 
-    // Initialize academic attendance record for Academic Year 2026-2027
-    const threshold = this.getAttendanceThreshold();
-    const initialAttendance = 88.0; // Baseline initial attendance eligible for No-Due clearance
+    // Section 33.A: Attendance Must Initially Be Empty (NULL) on student registration/request
+    // Do not automatically assign 0%, 85%, 100%, or any placeholder percentage.
     const records = this.getAcademicRecords();
     records.push({
       id: `acad-${newId}`,
@@ -479,9 +507,10 @@ export const Engine = {
       faculty_id: assignedFaculty?.id || '',
       academic_year: academicYear,
       semester: newProfile.semester || 5,
-      attendance_percentage: initialAttendance,
-      is_eligible: initialAttendance >= threshold,
-      academic_remarks: `Self-registered student for academic year ${academicYear} clearance.`,
+      attendance_percentage: null,
+      is_eligible: null,
+      attendance_status: 'AWAITING_FACULTY_ENTRY',
+      academic_remarks: 'Awaiting faculty attendance entry after No-Due request submission.',
       updated_at: new Date().toISOString(),
     });
     set(STORAGE_KEYS.ACADEMIC_RECORDS, records);
@@ -728,6 +757,8 @@ export const Engine = {
       departmentId?: string;
       designation?: string;
       password?: string;
+      subjects?: string[];
+      semester?: number;
     },
     adminId: string
   ): UserProfile {
@@ -767,6 +798,8 @@ export const Engine = {
       designation: params.designation?.trim() || defaultDesignation,
       department: dept?.name || 'Central Institutional Administration',
       department_id: dept?.id,
+      subjects: params.subjects || [],
+      semester: params.semester,
       is_active: true,
       is_verified: true,
       verification_status: 'VERIFIED',
@@ -833,6 +866,10 @@ export const Engine = {
 
     // Requirement 8: Make initial setup idempotent so rerunning does not create duplicates or overwrite existing password.
     if (existingAdmin) {
+      if (existingAdmin.full_name !== 'Dr. Srikantappa As') {
+        existingAdmin.full_name = 'Dr. Srikantappa As';
+        set(STORAGE_KEYS.PROFILES, profiles);
+      }
       if (initialPass && existingAdmin.must_change_password) {
         const creds = get<StoredCredential[]>(STORAGE_KEYS.CREDENTIALS, SEED_CREDENTIALS);
         const existingIdx = creds.findIndex(
@@ -856,7 +893,7 @@ export const Engine = {
     const initialAdmin: UserProfile = {
       id: 'usr-admin-01',
       role: 'admin',
-      full_name: 'Institutional Administrator',
+      full_name: 'Dr. Srikantappa As',
       email: defaultEmail,
       staff_id: 'CIT-ADM-001',
       department: 'Central Institutional Administration',
@@ -1318,8 +1355,9 @@ export const Engine = {
     profiles.push(newProfile);
     set(STORAGE_KEYS.PROFILES, profiles);
 
-    // Create academic record
+    // Create academic record (Section 33: null initially if not explicitly provisioned)
     const threshold = this.getAttendanceThreshold();
+    const hasInitial = typeof studentData.initialAttendance === 'number';
     const academicRecords = this.getAcademicRecords();
     academicRecords.push({
       id: `acad-${newProfile.id}`,
@@ -1330,9 +1368,12 @@ export const Engine = {
       faculty_id: faculty.id,
       academic_year: '2026-2027',
       semester: studentData.semester,
-      attendance_percentage: studentData.initialAttendance,
-      is_eligible: studentData.initialAttendance >= threshold,
-      academic_remarks: 'Provisioned from approved institutional student list.',
+      attendance_percentage: hasInitial ? studentData.initialAttendance : null,
+      is_eligible: hasInitial ? (studentData.initialAttendance >= threshold) : null,
+      attendance_status: hasInitial ? 'ENTERED' : 'AWAITING_FACULTY_ENTRY',
+      academic_remarks: hasInitial
+        ? 'Provisioned from approved institutional student list.'
+        : 'Awaiting faculty attendance entry after No-Due request submission.',
       updated_at: new Date().toISOString(),
     });
     set(STORAGE_KEYS.ACADEMIC_RECORDS, academicRecords);
@@ -1385,6 +1426,31 @@ export const Engine = {
     return depts[idx];
   },
 
+  // Canonical Department Matching & Scope Isolation (Section 32.C & 32.D)
+  getDepartmentCanonicalId(deptIdOrNameOrCode?: string): string | null {
+    if (!deptIdOrNameOrCode) return null;
+    const clean = deptIdOrNameOrCode.trim().toLowerCase();
+    const depts = this.getDepartments();
+    const match = depts.find(
+      (d) =>
+        d.id.toLowerCase() === clean ||
+        d.code.toLowerCase() === clean ||
+        d.name.toLowerCase() === clean
+    );
+    if (match) return match.id;
+    return clean;
+  },
+
+  isDepartmentMatch(deptA?: string, deptB?: string): boolean {
+    if (!deptA || !deptB) return false;
+    const cleanA = deptA.trim().toLowerCase();
+    const cleanB = deptB.trim().toLowerCase();
+    if (cleanA === cleanB) return true;
+    const canA = this.getDepartmentCanonicalId(deptA);
+    const canB = this.getDepartmentCanonicalId(deptB);
+    return Boolean(canA && canB && canA === canB);
+  },
+
   // Administratively Managed Academic Periods (Section 2 & 11)
   getAcademicPeriods(): AcademicPeriod[] {
     return get<AcademicPeriod[]>(STORAGE_KEYS.ACADEMIC_PERIODS, SEED_ACADEMIC_PERIODS);
@@ -1421,10 +1487,10 @@ export const Engine = {
     }
     set(STORAGE_KEYS.SETTINGS, settings);
 
-    // Re-evaluate eligibility for all academic records
+    // Re-evaluate eligibility for all academic records (Section 33: null if attendance not yet entered)
     const records = this.getAcademicRecords();
     records.forEach((r) => {
-      r.is_eligible = r.attendance_percentage >= newThreshold;
+      r.is_eligible = typeof r.attendance_percentage === 'number' ? r.attendance_percentage >= newThreshold : null;
     });
     set(STORAGE_KEYS.ACADEMIC_RECORDS, records);
 
@@ -1445,9 +1511,681 @@ export const Engine = {
   },
 
   getAcademicRecordForStudent(studentId: string, year: string, semester: number): StudentAcademicRecord | undefined {
-    return this.getAcademicRecords().find(
+    const record = this.getAcademicRecords().find(
       (r) => r.student_id === studentId && r.academic_year === year && r.semester === semester
     );
+    if (!record) return undefined;
+
+    const subjects = this.getSubjectAttendanceForStudent(studentId);
+    const relevantSubjects = subjects.filter(
+      (s) => s.academic_year === year && s.semester === semester
+    );
+
+    return {
+      ...record,
+      subject_entries: relevantSubjects,
+    };
+  },
+
+  // ----------------------------------------------------------------------------
+  // SECTION 34: RELATIONAL SUBJECTS, STAFF ASSIGNMENTS & REVIEW TASKS
+  // ----------------------------------------------------------------------------
+  getSubjects(departmentIdOrName?: string, semester?: number, academicYear?: string): Subject[] {
+    const subjects = get<Subject[]>(STORAGE_KEYS.SUBJECTS, []);
+    return subjects.filter((s) => {
+      if (departmentIdOrName && !this.isDepartmentMatch(departmentIdOrName, s.department_id) && !this.isDepartmentMatch(departmentIdOrName, s.department_name)) {
+        return false;
+      }
+      if (semester && s.semester !== semester) return false;
+      if (academicYear && s.academic_year !== academicYear) return false;
+      return true;
+    });
+  },
+
+  createSubject(params: {
+    code: string;
+    name: string;
+    departmentId: string;
+    departmentName: string;
+    semester: number;
+    academicYear?: string;
+    credits?: number;
+  }): Subject {
+    const subjects = get<Subject[]>(STORAGE_KEYS.SUBJECTS, []);
+    const existing = subjects.find(
+      (s) => s.code.toLowerCase() === params.code.toLowerCase() && s.department_id === params.departmentId && s.semester === params.semester
+    );
+    if (existing) return existing;
+
+    const newSub: Subject = {
+      id: `sub-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      code: params.code,
+      name: params.name,
+      department_id: params.departmentId,
+      department_name: params.departmentName,
+      semester: params.semester,
+      academic_year: params.academicYear || '2026-2027',
+      credits: params.credits || 4,
+      created_at: new Date().toISOString(),
+    };
+    subjects.push(newSub);
+    set(STORAGE_KEYS.SUBJECTS, subjects);
+    return newSub;
+  },
+
+  getStaffSubjectAssignments(facultyId?: string, subjectId?: string): StaffSubjectAssignment[] {
+    const assignments = get<StaffSubjectAssignment[]>(STORAGE_KEYS.STAFF_SUBJECT_ASSIGNMENTS, []);
+    return assignments.filter((a) => {
+      if (facultyId && a.faculty_id !== facultyId) return false;
+      if (subjectId && a.subject_id !== subjectId) return false;
+      return true;
+    });
+  },
+
+  assignFacultyToSubject(params: {
+    facultyId: string;
+    subjectId: string;
+    semester?: number;
+    academicYear?: string;
+  }): StaffSubjectAssignment {
+    const faculty = this.getProfileById(params.facultyId);
+    if (!faculty || faculty.role !== 'faculty') throw new Error('Faculty profile not found.');
+
+    const subjects = get<Subject[]>(STORAGE_KEYS.SUBJECTS, []);
+    const subject = subjects.find((s) => s.id === params.subjectId);
+    if (!subject) throw new Error('Subject not found.');
+
+    const assignments = get<StaffSubjectAssignment[]>(STORAGE_KEYS.STAFF_SUBJECT_ASSIGNMENTS, []);
+    const existing = assignments.find((a) => a.faculty_id === params.facultyId && a.subject_id === params.subjectId);
+    if (existing) return existing;
+
+    const assignment: StaffSubjectAssignment = {
+      id: `ssa-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      faculty_id: faculty.id,
+      faculty_name: faculty.full_name,
+      subject_id: subject.id,
+      subject_code: subject.code,
+      subject_name: subject.name,
+      department_id: subject.department_id,
+      semester: params.semester || subject.semester,
+      academic_year: params.academicYear || subject.academic_year,
+      created_at: new Date().toISOString(),
+    };
+    assignments.push(assignment);
+    set(STORAGE_KEYS.STAFF_SUBJECT_ASSIGNMENTS, assignments);
+    return assignment;
+  },
+
+  getStudentSubjectEnrollments(studentId?: string): StudentSubjectEnrollment[] {
+    const enrollments = get<StudentSubjectEnrollment[]>(STORAGE_KEYS.STUDENT_SUBJECT_ENROLLMENTS, []);
+    if (!studentId) return enrollments;
+    return enrollments.filter((e) => e.student_id === studentId);
+  },
+
+  getRequestFacultyAssignments(requestId?: string, facultyId?: string): RequestFacultyAssignment[] {
+    const assignments = get<RequestFacultyAssignment[]>(STORAGE_KEYS.REQUEST_FACULTY_ASSIGNMENTS, []);
+    return assignments.filter((a) => {
+      if (requestId && a.request_id !== requestId) return false;
+      if (facultyId && a.faculty_id !== facultyId) return false;
+      return true;
+    });
+  },
+
+  getFacultyReviewTasks(reqOrFacultyId?: string, maybeReqId?: string): FacultyReviewTask[] {
+    const tasks = get<FacultyReviewTask[]>(STORAGE_KEYS.FACULTY_REVIEW_TASKS, []);
+    return tasks.filter((t) => {
+      if (reqOrFacultyId) {
+        if (reqOrFacultyId.startsWith('req-')) {
+          if (t.request_id !== reqOrFacultyId) return false;
+          if (maybeReqId && t.faculty_id !== maybeReqId) return false;
+        } else {
+          if (t.faculty_id !== reqOrFacultyId && t.request_id !== reqOrFacultyId) return false;
+          if (maybeReqId && t.request_id !== maybeReqId) return false;
+        }
+      }
+      return true;
+    });
+  },
+
+  // ----------------------------------------------------------------------------
+  // SECTION 33 & 34: SUBJECT-WISE ATTENDANCE & AUTOMATIC OVERALL CALCULATION
+  // ----------------------------------------------------------------------------
+  getSubjectAttendanceRecords(): SubjectAttendanceRecord[] {
+    return get<SubjectAttendanceRecord[]>(STORAGE_KEYS.SUBJECT_ATTENDANCE, []);
+  },
+
+  getSubjectAttendanceForStudent(studentId: string, requestId?: string): SubjectAttendanceRecord[] {
+    const records = this.getSubjectAttendanceRecords();
+    return records.filter((r) => {
+      if (requestId && r.request_id === requestId) return true;
+      return r.student_id === studentId;
+    });
+  },
+
+  getSubjectAttendanceForFaculty(facultyId: string): SubjectAttendanceRecord[] {
+    const faculty = this.getProfileById(facultyId);
+    if (!faculty) return [];
+    if (faculty.role === 'admin') return this.getSubjectAttendanceRecords();
+    if (faculty.role !== 'faculty') return [];
+
+    return this.getSubjectAttendanceRecords().filter((r) => {
+      return r.faculty_id === facultyId || (
+        this.isDepartmentMatch(faculty.department_id || faculty.department, this.getProfileById(r.student_id)?.department || '') &&
+        r.faculty_id === facultyId
+      );
+    });
+  },
+
+  initializeSubjectAttendanceForRequest(req: NoDueRequest, eligibleFaculty: UserProfile): SubjectAttendanceRecord[] {
+    const existing = this.getSubjectAttendanceForStudent(req.student_id, req.id);
+    if (existing.length > 0) return existing;
+
+    const allRecords = this.getSubjectAttendanceRecords();
+    const profiles = this.getProfiles();
+
+    // 1. Gather all active verified faculty members teaching this department and semester
+    const deptFaculty = profiles.filter(
+      (p) =>
+        p.role === 'faculty' &&
+        p.is_active &&
+        p.is_verified !== false &&
+        p.verification_status === 'VERIFIED' &&
+        this.isDepartmentMatch(p.department_id || p.department, req.department) &&
+        (!p.semester || p.semester === req.semester)
+    );
+
+    // 2. Identify subjects mapped to faculty accounts
+    const subjectList: { subjectName: string; faculty: UserProfile }[] = [];
+
+    deptFaculty.forEach((fac) => {
+      let subs: string[] = [];
+      if (Array.isArray(fac.subjects) && fac.subjects.length > 0) {
+        subs = fac.subjects;
+      } else if (typeof fac.subjects === 'string' && (fac.subjects as string).trim().length > 0) {
+        subs = (fac.subjects as string).split(',').map((s) => s.trim()).filter(Boolean);
+      }
+      subs.forEach((s) => {
+        if (!subjectList.some((entry) => entry.subjectName.toLowerCase() === s.toLowerCase())) {
+          subjectList.push({ subjectName: s, faculty: fac });
+        }
+      });
+    });
+
+    // Fallback: If no faculty has explicit subjects, check eligibleFaculty
+    if (subjectList.length === 0) {
+      let subs: string[] = [];
+      if (Array.isArray(eligibleFaculty.subjects) && eligibleFaculty.subjects.length > 0) {
+        subs = eligibleFaculty.subjects;
+      } else if (typeof eligibleFaculty.subjects === 'string' && (eligibleFaculty.subjects as string).trim().length > 0) {
+        subs = (eligibleFaculty.subjects as string).split(',').map((s) => s.trim()).filter(Boolean);
+      }
+
+      if (subs.length > 0) {
+        subs.forEach((s) => subjectList.push({ subjectName: s, faculty: eligibleFaculty }));
+      } else {
+        // Standard department curriculum core subject
+        subjectList.push({
+          subjectName: `${req.department} Core Subject (Sem ${req.semester})`,
+          faculty: eligibleFaculty,
+        });
+      }
+    }
+
+    const created: SubjectAttendanceRecord[] = subjectList.map((entry, idx) => ({
+      id: `sub-att-${req.id}-${idx + 1}`,
+      request_id: req.id,
+      student_id: req.student_id,
+      subject_code: `SUB-${req.semester}0${idx + 1}`,
+      subject_name: entry.subjectName,
+      faculty_id: entry.faculty.id,
+      faculty_name: entry.faculty.full_name,
+      academic_year: req.academic_year,
+      semester: req.semester,
+      classes_held: undefined,
+      classes_conducted: undefined,
+      classes_attended: undefined,
+      attendance_percentage: null, // Section 33.A: Must initially remain NULL / unset
+      status: 'AWAITING_ENTRY',
+      approval_status: 'WAITING_FOR_ATTENDANCE',
+      is_locked: false,
+      updated_at: new Date().toISOString(),
+    }));
+
+    allRecords.push(...created);
+    set(STORAGE_KEYS.SUBJECT_ATTENDANCE, allRecords);
+
+    // Section 34.H: Populate relational staff subject assignments and review tasks
+    const reqAssignments = this.getRequestFacultyAssignments();
+    const reviewTasks = this.getFacultyReviewTasks();
+
+    created.forEach((sub) => {
+      // Add subject attendance assignment if not present
+      if (!reqAssignments.some((a) => a.request_id === req.id && a.faculty_id === sub.faculty_id && a.role === 'subject_attendance')) {
+        reqAssignments.push({
+          id: `rfa-${req.id}-${sub.faculty_id}-sub`,
+          request_id: req.id,
+          faculty_id: sub.faculty_id,
+          faculty_name: sub.faculty_name,
+          role: 'subject_attendance',
+          subject_name: sub.subject_name,
+          status: 'ASSIGNED',
+          assigned_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+      // Add subject attendance review task
+      if (!reviewTasks.some((t) => t.request_id === req.id && t.faculty_id === sub.faculty_id && t.subject_name === sub.subject_name)) {
+        reviewTasks.push({
+          id: `task-sub-${req.id}-${sub.faculty_id}-${sub.id}`,
+          request_id: req.id,
+          faculty_id: sub.faculty_id,
+          task_type: 'subject_attendance',
+          subject_name: sub.subject_name,
+          status: 'PENDING',
+          created_at: new Date().toISOString(),
+        });
+      }
+    });
+
+    set(STORAGE_KEYS.REQUEST_FACULTY_ASSIGNMENTS, reqAssignments);
+    set(STORAGE_KEYS.FACULTY_REVIEW_TASKS, reviewTasks);
+
+    return created;
+  },
+
+  recordSubjectAttendance(params: {
+    subjectRecordId: string;
+    attendancePercentage?: number;
+    classesHeld?: number;
+    classesAttended?: number;
+    remarks?: string;
+    facultyId: string;
+  }): { subjectRecord: SubjectAttendanceRecord; academicRecord: StudentAcademicRecord } {
+    const caller = this.getProfileById(params.facultyId);
+    if (!caller || (caller.role !== 'faculty' && caller.role !== 'admin')) {
+      throw new Error('Unauthorized: Only authorized faculty members or administrators can enter subject attendance.');
+    }
+
+    if (caller.role === 'faculty' && (caller.is_verified === false || caller.verification_status !== 'VERIFIED')) {
+      throw new Error('Unauthorized: Staff member is not institutionally verified.');
+    }
+
+    const records = this.getSubjectAttendanceRecords();
+    const idx = records.findIndex((r) => r.id === params.subjectRecordId);
+    if (idx === -1) throw new Error('Subject attendance record not found.');
+
+    const sub = records[idx];
+
+    // Section 33.B.5 & 34.C.6: Multi-faculty authorization: faculty may enter attendance only for their assigned subject
+    if (caller.role === 'faculty' && sub.faculty_id !== params.facultyId) {
+      throw new Error('Access Denied: You are only authorized to enter attendance for your assigned subject(s).');
+    }
+
+    // Section 32 & 33.F: Department isolation check
+    const student = this.getProfileById(sub.student_id);
+    if (caller.role === 'faculty' && !this.isDepartmentMatch(caller.department_id || caller.department, student?.department_id || student?.department || '')) {
+      throw new Error('Access Denied: Faculty can only enter attendance for students in their authorized department.');
+    }
+
+    // Section 35.2 Rule 6: Once approved, lock the attendance record against ordinary edits
+    if (sub.is_locked && sub.approval_status === 'APPROVED' && caller.role !== 'admin') {
+      throw new Error('Attendance is approved and locked. A correction must be requested before edits can be made.');
+    }
+
+    // Section 34.A & 34.B: Validate numeric class counts
+    let percentage: number;
+    let classesHeld: number | undefined = undefined;
+    let classesAttended: number | undefined = undefined;
+
+    const rawHeld = params.classesHeld !== undefined ? params.classesHeld : ((params as any).classes_held ?? (params as any).classes_conducted);
+    const rawAttended = params.classesAttended !== undefined ? params.classesAttended : (params as any).classes_attended;
+
+    if (rawHeld !== undefined || rawAttended !== undefined) {
+      if (typeof rawHeld !== 'number' || isNaN(rawHeld) || !Number.isInteger(rawHeld) || rawHeld <= 0) {
+        throw new Error('Total Classes Conducted must be a positive whole number.');
+      }
+      if (typeof rawAttended !== 'number' || isNaN(rawAttended) || !Number.isInteger(rawAttended) || rawAttended < 0) {
+        throw new Error('Classes Attended must be a whole number greater than or equal to zero.');
+      }
+      if (rawAttended > rawHeld) {
+        throw new Error('Classes Attended cannot exceed Total Classes Conducted.');
+      }
+      classesHeld = rawHeld;
+      classesAttended = rawAttended;
+      percentage = Math.round((classesAttended / classesHeld) * 10000) / 100;
+    } else if (typeof params.attendancePercentage === 'number') {
+      if (isNaN(params.attendancePercentage) || params.attendancePercentage < 0 || params.attendancePercentage > 100) {
+        throw new Error('Attendance percentage must be a valid numeric value between 0% and 100%.');
+      }
+      percentage = Math.round(params.attendancePercentage * 100) / 100;
+    } else {
+      throw new Error('Attendance entry requires valid Total Classes Conducted and Classes Attended.');
+    }
+
+    const prevPercentage = sub.attendance_percentage;
+    sub.attendance_percentage = percentage;
+    sub.classes_held = classesHeld;
+    sub.classes_conducted = classesHeld;
+    sub.classes_attended = classesAttended;
+    sub.remarks = params.remarks || '';
+    sub.status = 'ENTERED';
+    // Section 35.2: Attendance Entered — Awaiting Approval
+    if (sub.approval_status !== 'APPROVED') {
+      sub.approval_status = 'AWAITING_APPROVAL';
+    }
+    sub.entered_at = new Date().toISOString();
+    sub.entered_by = params.facultyId;
+    sub.updated_at = new Date().toISOString();
+
+    records[idx] = sub;
+    set(STORAGE_KEYS.SUBJECT_ATTENDANCE, records);
+
+    // Update review task status
+    const tasks = this.getFacultyReviewTasks();
+    const taskIdx = tasks.findIndex(
+      (t) => t.request_id === sub.request_id && t.faculty_id === params.facultyId && t.task_type === 'subject_attendance'
+    );
+    if (taskIdx !== -1) {
+      tasks[taskIdx].status = 'COMPLETED';
+      tasks[taskIdx].completed_at = new Date().toISOString();
+      set(STORAGE_KEYS.FACULTY_REVIEW_TASKS, tasks);
+    }
+
+    this.logAudit(
+      params.facultyId,
+      caller.role,
+      'ENTER_SUBJECT_ATTENDANCE',
+      'subject_attendance_records',
+      sub.id,
+      { attendance_percentage: prevPercentage },
+      {
+        attendance_percentage: percentage,
+        subject: sub.subject_name,
+        classes_held: classesHeld,
+        classes_conducted: classesHeld,
+        classes_attended: classesAttended,
+      }
+    );
+
+    // Section 33.C & 34.D: Recalculate overall attendance automatically
+    const academicRecord = this.recalculateOverallAttendance(
+      sub.student_id,
+      sub.academic_year,
+      sub.semester,
+      sub.request_id
+    );
+
+    return { subjectRecord: sub, academicRecord };
+  },
+
+  // ----------------------------------------------------------------------------
+  // SECTION 35.2 & 35.3: INDIVIDUAL SUBJECT TEACHER APPROVAL DECISIONS
+  // ----------------------------------------------------------------------------
+  getTeacherApprovalDecisions(requestId?: string, subjectRecordId?: string): TeacherApprovalDecision[] {
+    const decisions = get<TeacherApprovalDecision[]>(STORAGE_KEYS.TEACHER_APPROVAL_DECISIONS, []);
+    return decisions.filter((d) => {
+      if (requestId && d.request_id !== requestId) return false;
+      if (subjectRecordId && d.subject_record_id !== subjectRecordId) return false;
+      return true;
+    });
+  },
+
+  processSubjectTeacherDecision(params: {
+    subjectRecordId: string;
+    facultyId: string;
+    decision: 'APPROVE' | 'REJECT' | 'CORRECTION_REQUIRED';
+    remarks?: string;
+  }): { subjectRecord: SubjectAttendanceRecord; request: NoDueRequest } {
+    const caller = this.getProfileById(params.facultyId);
+    if (!caller || (caller.role !== 'faculty' && caller.role !== 'admin')) {
+      throw new Error('Unauthorized: Only authorized faculty members or administrators can make subject approval decisions.');
+    }
+    if (caller.role === 'faculty' && (caller.is_verified === false || caller.verification_status !== 'VERIFIED')) {
+      throw new Error('Unauthorized: Staff member is not institutionally verified.');
+    }
+
+    // Atomic fetch & merge to prevent race conditions during concurrent approvals (Rule 35.6 & Test 8)
+    const records = this.getSubjectAttendanceRecords();
+    const idx = records.findIndex((r) => r.id === params.subjectRecordId);
+    if (idx === -1) throw new Error('Subject attendance record not found.');
+
+    const sub = records[idx];
+
+    // Section 35.2 Rule 3 & Acceptance Test 6: Teachers must not approve another teacher's subject unless authorized
+    if (caller.role === 'faculty' && sub.faculty_id !== params.facultyId) {
+      throw new Error('Access Denied: You are not authorized to approve attendance for another teacher\'s subject.');
+    }
+
+    // Department isolation
+    const student = this.getProfileById(sub.student_id);
+    if (
+      caller.role === 'faculty' &&
+      !this.isDepartmentMatch(caller.department_id || caller.department, student?.department_id || student?.department || '')
+    ) {
+      throw new Error('Access Denied: Faculty can only decide on attendance for students within their authorized department.');
+    }
+
+    const prevApprovalStatus = sub.approval_status;
+
+    if (params.decision === 'APPROVE') {
+      // Rule 35.2.1 & 35.2.4: Valid attendance must be entered and saved before approval becomes available
+      if (
+        sub.status !== 'ENTERED' ||
+        sub.attendance_percentage === null ||
+        sub.classes_held === undefined ||
+        sub.classes_attended === undefined
+      ) {
+        throw new Error('Approval Blocked: Valid attendance (Total Conducted and Attended classes) must be entered and saved before approval.');
+      }
+      sub.approval_status = 'APPROVED';
+      sub.approved_by = params.facultyId;
+      sub.approved_by_name = caller.full_name;
+      sub.approved_at = new Date().toISOString();
+      sub.approval_remarks = params.remarks || 'Attendance reviewed and approved by subject faculty.';
+      sub.is_locked = true; // Lock against unauthorized edits
+    } else if (params.decision === 'REJECT') {
+      sub.approval_status = 'REJECTED';
+      sub.rejection_remarks = params.remarks || 'Attendance rejected by subject faculty.';
+      sub.is_locked = false;
+    } else if (params.decision === 'CORRECTION_REQUIRED') {
+      sub.approval_status = 'CORRECTION_REQUIRED';
+      sub.rejection_remarks = params.remarks || 'Correction requested by subject faculty.';
+      sub.is_locked = false;
+    }
+
+    sub.updated_at = new Date().toISOString();
+    records[idx] = sub;
+    set(STORAGE_KEYS.SUBJECT_ATTENDANCE, records);
+
+    // Save immutable decision record in TEACHER_APPROVAL_DECISIONS
+    const decisions = get<TeacherApprovalDecision[]>(STORAGE_KEYS.TEACHER_APPROVAL_DECISIONS, []);
+    const decisionRecord: TeacherApprovalDecision = {
+      id: `tad-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      request_id: sub.request_id,
+      subject_record_id: sub.id,
+      subject_id: sub.subject_id,
+      subject_name: sub.subject_name,
+      faculty_id: params.facultyId,
+      faculty_name: caller.full_name,
+      decision: params.decision,
+      attendance_percentage: sub.attendance_percentage,
+      classes_held: sub.classes_held,
+      classes_conducted: sub.classes_held,
+      classes_attended: sub.classes_attended,
+      remarks: params.remarks,
+      decided_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    decisions.push(decisionRecord);
+    set(STORAGE_KEYS.TEACHER_APPROVAL_DECISIONS, decisions);
+
+    // Update FacultyReviewTask if present
+    const tasks = this.getFacultyReviewTasks();
+    const task = tasks.find(
+      (t) => t.request_id === sub.request_id && t.faculty_id === params.facultyId && t.task_type === 'subject_attendance'
+    );
+    if (task && params.decision === 'APPROVE') {
+      task.status = 'COMPLETED';
+      task.completed_at = new Date().toISOString();
+      set(STORAGE_KEYS.FACULTY_REVIEW_TASKS, tasks);
+    }
+
+    // Audit Log
+    this.logAudit(
+      params.facultyId,
+      caller.role,
+      `SUBJECT_TEACHER_${params.decision}`,
+      'subject_attendance_records',
+      sub.id,
+      { previous_status: prevApprovalStatus },
+      { decision: params.decision, subject: sub.subject_name, remarks: params.remarks }
+    );
+
+    // Notifications
+    this.createNotification(
+      sub.student_id,
+      `Subject Attendance ${params.decision === 'APPROVE' ? 'Approved' : params.decision === 'REJECT' ? 'Rejected' : 'Correction Requested'}`,
+      `${caller.full_name} (${sub.subject_name}): ${params.remarks || (params.decision === 'APPROVE' ? 'Attendance approved.' : 'Action required.')}`,
+      params.decision === 'APPROVE' ? 'success' : 'action_required',
+      '/student'
+    );
+
+    // Recalculate overall attendance and update standing
+    this.recalculateOverallAttendance(sub.student_id, sub.academic_year, sub.semester, sub.request_id);
+
+    return { subjectRecord: sub, request: this.getRequestById(sub.request_id)! };
+  },
+
+  recalculateOverallAttendance(
+    studentId: string,
+    academicYear: string,
+    semester: number,
+    requestId?: string
+  ): StudentAcademicRecord {
+    const subjects = this.getSubjectAttendanceForStudent(studentId, requestId);
+    const relevantSubjects = subjects.filter(
+      (s) => s.academic_year === academicYear && s.semester === semester
+    );
+
+    const acadRecords = this.getAcademicRecords();
+    let acadIdx = acadRecords.findIndex(
+      (a) => a.student_id === studentId && a.academic_year === academicYear && a.semester === semester
+    );
+
+    if (acadIdx === -1) {
+      const student = this.getProfileById(studentId);
+      acadRecords.push({
+        id: `acad-${studentId}`,
+        student_id: studentId,
+        student_name: student?.full_name,
+        student_code: student?.student_id,
+        department: student?.department || '',
+        faculty_id: student?.assigned_faculty_id || '',
+        academic_year: academicYear,
+        semester,
+        attendance_percentage: null,
+        is_eligible: null,
+        attendance_status: 'AWAITING_FACULTY_ENTRY',
+        updated_at: new Date().toISOString(),
+      });
+      acadIdx = acadRecords.length - 1;
+    }
+
+    const acad = acadRecords[acadIdx];
+    const threshold = this.getAttendanceThreshold();
+
+    const totalSubjects = relevantSubjects.length;
+    const approvedSubjects = relevantSubjects.filter(
+      (s) => s.approval_status === 'APPROVED'
+    ).length;
+    const allApproved = totalSubjects > 0 && approvedSubjects === totalSubjects;
+    const pendingSubjects = relevantSubjects
+      .filter((s) => s.approval_status !== 'APPROVED')
+      .map((s) => s.subject_name);
+
+    acad.subject_approvals_total = totalSubjects;
+    acad.subject_approvals_count = approvedSubjects;
+    acad.all_subject_approvals_completed = allApproved;
+    acad.pending_approval_subjects = pendingSubjects;
+
+    if (relevantSubjects.length === 0) {
+      // No subject entries configured
+      acad.attendance_status = 'AWAITING_FACULTY_ENTRY';
+      acad.attendance_percentage = null;
+      acad.is_eligible = null;
+      acad.calculation_details = 'Awaiting faculty attendance entry after No-Due request submission.';
+    } else {
+      const missingCount = relevantSubjects.filter(
+        (s) => s.status !== 'ENTERED' || s.attendance_percentage === null
+      ).length;
+
+      if (missingCount > 0) {
+        // Section 33.C: Do not calculate or display an overall percentage while required subject data is missing
+        const enteredCount = relevantSubjects.length - missingCount;
+        acad.attendance_percentage = null;
+        acad.is_eligible = null;
+        acad.attendance_status = enteredCount > 0 ? 'ATTENDANCE_INCOMPLETE' : 'AWAITING_FACULTY_ENTRY';
+        acad.calculation_details = `Attendance incomplete: ${enteredCount} of ${relevantSubjects.length} required subjects entered.`;
+      } else {
+        // All subjects are entered! Calculate institution-approved overall percentage
+        const allHaveCounts = relevantSubjects.every(
+          (s) => typeof s.classes_held === 'number' && typeof s.classes_attended === 'number' && s.classes_held > 0
+        );
+
+        let overallPercentage: number;
+        let method: 'WEIGHTED_CLASS_COUNT' | 'AVERAGE_PERCENTAGE';
+        let details: string;
+
+        if (allHaveCounts) {
+          const totalHeld = relevantSubjects.reduce((acc, s) => acc + (s.classes_held || 0), 0);
+          const totalAttended = relevantSubjects.reduce((acc, s) => acc + (s.classes_attended || 0), 0);
+          overallPercentage = Math.round((totalAttended / totalHeld) * 10000) / 100;
+          method = 'WEIGHTED_CLASS_COUNT';
+          details = `Weighted class count: ${totalAttended} attended / ${totalHeld} held across ${relevantSubjects.length} subjects. (${approvedSubjects} of ${totalSubjects} subject teachers approved).`;
+          acad.total_classes_held = totalHeld;
+          acad.total_classes_attended = totalAttended;
+        } else {
+          const sumPercentages = relevantSubjects.reduce((acc, s) => acc + (s.attendance_percentage || 0), 0);
+          overallPercentage = Math.round((sumPercentages / relevantSubjects.length) * 100) / 100;
+          method = 'AVERAGE_PERCENTAGE';
+          details = `Institution-approved arithmetic mean across ${relevantSubjects.length} required subjects. (${approvedSubjects} of ${totalSubjects} subject teachers approved).`;
+        }
+
+        acad.attendance_percentage = overallPercentage;
+        acad.attendance_status = 'ENTERED';
+        acad.calculation_method = method;
+        acad.calculation_details = details;
+        // Section 33.D: Apply attendance threshold
+        acad.is_eligible = overallPercentage >= threshold;
+      }
+    }
+
+    acad.updated_at = new Date().toISOString();
+    acadRecords[acadIdx] = acad;
+    set(STORAGE_KEYS.ACADEMIC_RECORDS, acadRecords);
+
+    // Sync active request if present
+    const requests = this.getRequests();
+    const req = requests.find((r) => {
+      if (requestId && r.id === requestId) return true;
+      return r.student_id === studentId && r.academic_year === academicYear && r.semester === semester;
+    });
+
+    if (req) {
+      req.attendance_percentage = acad.attendance_percentage;
+      req.attendance_status = acad.attendance_status;
+      req.updated_at = new Date().toISOString();
+      const reqIdx = requests.findIndex((r) => r.id === req.id);
+      if (reqIdx !== -1) {
+        requests[reqIdx] = req;
+        set(STORAGE_KEYS.REQUESTS, requests);
+      }
+    }
+
+    return {
+      ...acad,
+      subject_entries: relevantSubjects,
+    };
   },
 
   updateAcademicRecord(
@@ -1467,11 +2205,49 @@ export const Engine = {
     const prev = { ...records[idx] };
 
     records[idx].attendance_percentage = attendance;
+    records[idx].attendance_status = 'ENTERED';
     records[idx].is_eligible = attendance >= threshold;
     records[idx].academic_remarks = remarks;
     records[idx].updated_at = new Date().toISOString();
 
     set(STORAGE_KEYS.ACADEMIC_RECORDS, records);
+
+    // Sync any subject records if existing
+    const subjects = this.getSubjectAttendanceRecords();
+    const studentSubjects = subjects.filter(
+      (s) => s.student_id === records[idx].student_id &&
+             s.academic_year === records[idx].academic_year &&
+             s.semester === records[idx].semester
+    );
+    if (studentSubjects.length > 0) {
+      studentSubjects.forEach((s) => {
+        if (s.faculty_id === facultyId || this.getProfileById(facultyId)?.role === 'admin') {
+          s.attendance_percentage = attendance;
+          s.status = 'ENTERED';
+          s.entered_at = new Date().toISOString();
+          s.entered_by = facultyId;
+          s.updated_at = new Date().toISOString();
+        }
+      });
+      set(STORAGE_KEYS.SUBJECT_ATTENDANCE, subjects);
+    }
+
+    // Sync with request
+    const requests = this.getRequests();
+    const req = requests.find(
+      (r) => r.student_id === records[idx].student_id &&
+             r.academic_year === records[idx].academic_year &&
+             r.semester === records[idx].semester
+    );
+    if (req) {
+      req.attendance_percentage = attendance;
+      req.attendance_status = 'ENTERED';
+      const rIdx = requests.findIndex((r) => r.id === req.id);
+      if (rIdx !== -1) {
+        requests[rIdx] = req;
+        set(STORAGE_KEYS.REQUESTS, requests);
+      }
+    }
 
     this.logAudit(
       facultyId,
@@ -1558,31 +2334,47 @@ export const Engine = {
     });
   },
 
-  getRequestById(id: string): NoDueRequest | undefined {
-    return this.getRequests().find((r) => r.id === id);
+  getRequestById(id: string, requesterId?: string): NoDueRequest | undefined {
+    const req = this.getRequests().find((r) => r.id === id);
+    if (!req) return undefined;
+    if (requesterId) {
+      const user = this.getProfileById(requesterId);
+      if (user && user.role !== 'admin') {
+        if (user.role === 'student' && req.student_id !== user.id) {
+          throw new Error('Access Denied: You are not authorized to view another student\'s clearance request.');
+        }
+        if (user.role === 'faculty' && (!this.isDepartmentMatch(user.department_id || user.department, req.department) || req.assigned_faculty_id !== user.id)) {
+          throw new Error('Access Denied: Faculty members cannot view clearance requests outside their assigned scope and department.');
+        }
+        if (user.role === 'lab_staff' && !this.isDepartmentMatch(user.department_id || user.department, req.department)) {
+          throw new Error('Access Denied: Laboratory staff cannot view clearance requests outside their assigned department.');
+        }
+        if (user.role === 'hod' && !this.isDepartmentMatch(user.department_id || user.department, req.department)) {
+          throw new Error('Access Denied: Head of Department cannot view clearance requests outside their authorized department.');
+        }
+      }
+    }
+    return req;
   },
 
-  // Dynamic Faculty Retrieval for Department (Strictly Real, Active & Verified Faculty Only - Section 28.D)
-  getFacultyForDepartment(deptIdOrName?: string): UserProfile[] {
+  // Dynamic Faculty Retrieval for Department & Academic Period (Section 28.D & 32.B)
+  getFacultyForDepartment(
+    deptIdOrName?: string,
+    period?: { academic_year?: string; semester?: number }
+  ): UserProfile[] {
     const profiles = this.getProfiles();
     return profiles.filter((p) => {
       if (p.role !== 'faculty' || !p.is_active || p.is_verified === false || p.verification_status !== 'VERIFIED') return false;
-      if (!deptIdOrName) return true;
-      const cleanTarget = deptIdOrName.trim().toLowerCase();
-      const matchId = p.department_id && p.department_id.toLowerCase() === cleanTarget;
-      const matchName = p.department && p.department.toLowerCase() === cleanTarget;
-      const depts = this.getDepartments();
-      const deptObj = depts.find(
-        (d) =>
-          d.id.toLowerCase() === cleanTarget ||
-          d.code.toLowerCase() === cleanTarget ||
-          d.name.toLowerCase() === cleanTarget
-      );
-      const matchDeptObj =
-        deptObj &&
-        (p.department_id === deptObj.id ||
-          p.department.toLowerCase() === deptObj.name.toLowerCase());
-      return Boolean(matchId || matchName || matchDeptObj);
+      if (deptIdOrName && !this.isDepartmentMatch(deptIdOrName, p.department_id || p.department)) {
+        return false;
+      }
+      if (period?.semester && p.semester && p.semester !== period.semester) {
+        return false;
+      }
+      if (period?.academic_year && p.academic_year && p.academic_year !== period.academic_year) {
+        return false;
+      }
+      return true;
     });
   },
 
@@ -1592,7 +2384,7 @@ export const Engine = {
     yearOrSem: string | number,
     semOrNotes?: number | string,
     maybeNotes?: string,
-    selectedFacultyId?: string
+    selectedFacultyId?: string | string[]
   ): NoDueRequest {
     const student = this.getProfileById(studentId);
     if (!student || student.role !== 'student') throw new Error('Unauthorized: Student profile not found');
@@ -1606,10 +2398,13 @@ export const Engine = {
       academicYear = deptOrYear;
       semester = yearOrSem;
       notes = typeof semOrNotes === 'string' ? semOrNotes : undefined;
+      if (Array.isArray(maybeNotes) || (typeof maybeNotes === 'string' && !selectedFacultyId)) {
+        selectedFacultyId = maybeNotes as any;
+      }
     } else {
-      department = deptOrYear;
-      academicYear = String(yearOrSem);
-      semester = typeof semOrNotes === 'number' ? semOrNotes : 5;
+      department = (deptOrYear && !deptOrYear.includes('-') && deptOrYear !== yearOrSem) ? deptOrYear : student.department;
+      academicYear = String(yearOrSem || '2026-2027');
+      semester = typeof semOrNotes === 'number' ? semOrNotes : (student.semester || 5);
       notes = maybeNotes;
     }
 
@@ -1635,27 +2430,36 @@ export const Engine = {
       );
     }
 
-    // SECTION 26 & WORKFLOW: Verify Faculty Availability Before Submission
+    // SECTION 26 & SECTION 34: Multi-Faculty Selection & Availability Verification
     const profiles = this.getProfiles();
     let eligibleFaculty: UserProfile | undefined = undefined;
+    const selectedProfiles: UserProfile[] = [];
 
-    // A. Explicit teacher selection by student in mandatory teacher-selection step
-    if (selectedFacultyId) {
-      const selected = profiles.find(
-        (p) =>
-          p.id === selectedFacultyId &&
-          p.role === 'faculty' &&
-          p.is_active &&
-          p.is_verified !== false &&
-          p.verification_status === 'VERIFIED' &&
-          (p.department_id === student.department_id ||
-            p.department?.toLowerCase() === department?.toLowerCase() ||
-            p.department?.toLowerCase() === student.department?.toLowerCase())
-      );
-      if (!selected) {
-        throw new Error('Selected faculty member is not active, not institutionally verified, or not authorized for your department.');
+    // Normalize selected faculty IDs (single string or array)
+    const selectedIds: string[] = [];
+    if (Array.isArray(selectedFacultyId)) {
+      selectedIds.push(...selectedFacultyId);
+    } else if (typeof selectedFacultyId === 'string' && selectedFacultyId.trim().length > 0) {
+      selectedIds.push(selectedFacultyId);
+    }
+
+    if (selectedIds.length > 0) {
+      for (const fid of selectedIds) {
+        const selected = profiles.find(
+          (p) =>
+            p.id === fid &&
+            p.role === 'faculty' &&
+            p.is_active &&
+            p.is_verified !== false &&
+            p.verification_status === 'VERIFIED' &&
+            this.isDepartmentMatch(p.department_id || p.department, student.department_id || student.department || department)
+        );
+        if (!selected) {
+          throw new Error('Selected faculty member is not active, not institutionally verified, or not authorized for your department.');
+        }
+        selectedProfiles.push(selected);
       }
-      eligibleFaculty = selected;
+      eligibleFaculty = selectedProfiles[0];
     }
 
     // B. Check student's pre-assigned faculty if active, verified and eligible
@@ -1667,12 +2471,11 @@ export const Engine = {
           p.is_active &&
           p.is_verified !== false &&
           p.verification_status === 'VERIFIED' &&
-          (p.department_id === student.department_id ||
-            p.department?.toLowerCase() === department?.toLowerCase() ||
-            p.department?.toLowerCase() === student.department?.toLowerCase())
+          this.isDepartmentMatch(p.department_id || p.department, student.department_id || student.department || department)
       );
       if (assigned) {
         eligibleFaculty = assigned;
+        selectedProfiles.push(assigned);
       }
     }
 
@@ -1684,10 +2487,11 @@ export const Engine = {
           p.is_active &&
           p.is_verified !== false &&
           p.verification_status === 'VERIFIED' &&
-          (p.department_id === student.department_id ||
-            p.department?.toLowerCase() === department?.toLowerCase() ||
-            p.department?.toLowerCase() === student.department?.toLowerCase())
+          this.isDepartmentMatch(p.department_id || p.department, student.department_id || student.department || department)
       );
+      if (eligibleFaculty) {
+        selectedProfiles.push(eligibleFaculty);
+      }
     }
 
     // D. BLOCK SUBMISSION WHEN NO ELIGIBLE FACULTY IS AVAILABLE (Section 26.B)
@@ -1721,6 +2525,9 @@ export const Engine = {
     requestCounter += 1;
     const requestCode = `ND-2026-${String(requestCounter).padStart(6, '0')}`;
 
+    const assignedIds = selectedProfiles.length > 0 ? selectedProfiles.map((f) => f.id) : [eligibleFaculty.id];
+    const assignedNames = selectedProfiles.length > 0 ? selectedProfiles.map((f) => f.full_name) : [eligibleFaculty.full_name];
+
     const newRequest: NoDueRequest = {
       id: `req-${Date.now()}`,
       request_code: requestCode,
@@ -1731,6 +2538,8 @@ export const Engine = {
       status: 'PENDING_FACULTY_REVIEW',
       assigned_faculty_id: eligibleFaculty.id,
       assigned_faculty_name: eligibleFaculty.full_name,
+      assigned_faculty_ids: assignedIds,
+      assigned_faculty_names: assignedNames,
       faculty_assignment_status: 'ASSIGNED',
       faculty_status: 'PENDING',
       library_status: 'PENDING',
@@ -1739,6 +2548,8 @@ export const Engine = {
       hod_status: 'PENDING',
       hall_ticket_eligibility: 'NOT_ELIGIBLE',
       hall_ticket_status: 'NOT YET RELEASED',
+      attendance_percentage: (acadRec && typeof acadRec.attendance_percentage === 'number') ? acadRec.attendance_percentage : null,
+      attendance_status: acadRec?.attendance_status || (acadRec && typeof acadRec.attendance_percentage === 'number' ? 'ENTERED' : 'AWAITING_FACULTY_ENTRY'),
       student_notes: notes || '',
       reassignment_history: [],
       created_at: new Date().toISOString(),
@@ -1748,21 +2559,76 @@ export const Engine = {
     requests.unshift(newRequest);
     set(STORAGE_KEYS.REQUESTS, requests);
 
+    // Initialize parallel departmental clearances (Library, Accounts, Lab)
+    const items = this.getClearanceItems();
+    const existingItems = items.filter((ci) => ci.request_id === newRequest.id);
+    if (existingItems.length === 0) {
+      const authorities: ('library' | 'accounts' | 'lab')[] = ['library', 'accounts', 'lab'];
+      authorities.forEach((auth) => {
+        items.push({
+          id: `item-${newRequest.id}-${auth}`,
+          request_id: newRequest.id,
+          authority: auth,
+          status: 'PENDING',
+          payment_required: false,
+          payment_status: 'NOT_REQUIRED',
+          responsible_payment_authority: auth === 'library' ? 'faculty' : 'authority',
+          updated_at: new Date().toISOString(),
+        });
+      });
+      set(STORAGE_KEYS.CLEARANCE_ITEMS, items);
+    }
+
+    // Section 34.E & 34.H: Save real relational request faculty assignments
+    const reqAssignments = this.getRequestFacultyAssignments();
+    const reviewTasks = this.getFacultyReviewTasks();
+    const facultyToAssign = selectedProfiles.length > 0 ? selectedProfiles : [eligibleFaculty];
+
+    facultyToAssign.forEach((f) => {
+      reqAssignments.push({
+        id: `rfa-${newRequest.id}-${f.id}-av`,
+        request_id: newRequest.id,
+        faculty_id: f.id,
+        faculty_name: f.full_name,
+        role: 'academic_verification',
+        status: 'ASSIGNED',
+        assigned_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      reviewTasks.push({
+        id: `task-av-${newRequest.id}-${f.id}`,
+        request_id: newRequest.id,
+        faculty_id: f.id,
+        task_type: 'academic_verification',
+        status: 'PENDING',
+        created_at: new Date().toISOString(),
+      });
+    });
+
+    set(STORAGE_KEYS.REQUEST_FACULTY_ASSIGNMENTS, reqAssignments);
+    set(STORAGE_KEYS.FACULTY_REVIEW_TASKS, reviewTasks);
+
+    // Section 33.B & 34.C: Initialize subject attendance records for this request
+    this.initializeSubjectAttendanceForRequest(newRequest, eligibleFaculty);
+
     this.logAudit(studentId, 'student', 'SUBMIT_CLEARANCE_REQUEST', 'no_due_requests', newRequest.id, null, {
       request_code: requestCode,
       academic_year: academicYear,
       semester,
       assigned_faculty: eligibleFaculty.full_name,
       assigned_faculty_id: eligibleFaculty.id,
+      assigned_faculty_ids: assignedIds,
     });
 
-    this.createNotification(
-      eligibleFaculty.id,
-      'New Clearance Request Awaiting Academic Verification',
-      `Student ${student.full_name} (${student.student_id}) submitted request ${requestCode} assigned to you for academic verification.`,
-      'action_required',
-      '/faculty'
-    );
+    facultyToAssign.forEach((f) => {
+      this.createNotification(
+        f.id,
+        'New Clearance Request Awaiting Academic Verification',
+        `Student ${student.full_name} (${student.student_id}) submitted request ${requestCode} assigned to you for academic verification.`,
+        'action_required',
+        '/faculty'
+      );
+    });
 
     return this.getRequestById(newRequest.id)!;
   },
@@ -1770,6 +2636,26 @@ export const Engine = {
   // Clearance Items
   getClearanceItems(): ClearanceItem[] {
     return get<ClearanceItem[]>(STORAGE_KEYS.CLEARANCE_ITEMS, SEED_CLEARANCE_ITEMS);
+  },
+
+  updateClearanceItem(item: Partial<ClearanceItem> & { id: string }): ClearanceItem {
+    const items = this.getClearanceItems();
+    const idx = items.findIndex((i) => i.id === item.id);
+    if (idx === -1) throw new Error('Clearance item not found');
+    items[idx] = { ...items[idx], ...item, updated_at: new Date().toISOString() };
+    set(STORAGE_KEYS.CLEARANCE_ITEMS, items);
+
+    // Sync request status if authority status changed
+    const requests = get<NoDueRequest[]>(STORAGE_KEYS.REQUESTS, SEED_REQUESTS);
+    const req = requests.find((r) => r.id === items[idx].request_id);
+    if (req) {
+      if (items[idx].authority === 'library') req.library_status = items[idx].status;
+      if (items[idx].authority === 'accounts') req.accounts_status = items[idx].status;
+      if (items[idx].authority === 'lab') req.lab_status = items[idx].status;
+      set(STORAGE_KEYS.REQUESTS, requests);
+    }
+
+    return items[idx];
   },
 
   // ----------------------------------------------------------------------------
@@ -1791,12 +2677,13 @@ export const Engine = {
 
     const req = requests[reqIdx];
 
-    // Section 26.F.5: The faculty member can review only requests within their authorized scope
+    // Section 26.F.5, 32.C & 34.E: The faculty member can review only requests within their authorized scope and department
     if (faculty.role === 'faculty') {
-      const isAssigned = req.assigned_faculty_id === facultyId;
-      const isSameDept = faculty.department && req.department && faculty.department.toLowerCase() === req.department.toLowerCase();
-      if (!isAssigned && !isSameDept) {
-        throw new Error('Unauthorized: You are not authorized to review clearance requests outside your assigned scope or department.');
+      const isAssigned = req.assigned_faculty_id === facultyId ||
+        (req.assigned_faculty_ids && req.assigned_faculty_ids.includes(facultyId));
+      const isSameDept = this.isDepartmentMatch(faculty.department_id || faculty.department, req.department);
+      if (!isAssigned || !isSameDept) {
+        throw new Error('Access Denied: Faculty members can only review clearance requests within their assigned scope and authorized department.');
       }
     }
 
@@ -1805,11 +2692,49 @@ export const Engine = {
       throw new Error('Academic attendance record not found for this student and semester.');
     }
 
+    // Section 33.A & 33.D: Missing attendance data cannot approve a student
+    if (acad.attendance_percentage === null || acad.attendance_percentage === undefined || acad.attendance_status === 'AWAITING_FACULTY_ENTRY' || acad.attendance_status === 'ATTENDANCE_INCOMPLETE') {
+      throw new Error(
+        'Academic Approval Blocked: Attendance is incomplete or awaiting faculty entry. All required subject attendance must be entered by authorized faculty before approval.'
+      );
+    }
+
     const minThreshold = this.getAttendanceThreshold();
     if (acad.attendance_percentage < minThreshold) {
       throw new Error(
         `Academic Approval Blocked: Student attendance is ${acad.attendance_percentage}%, which is below the mandatory threshold of ${minThreshold}%.`
       );
+    }
+
+    // Section 35.4: Block the Next Workflow Stage Until All Teachers Approve
+    const subjects = this.getSubjectAttendanceForStudent(req.student_id, req.id);
+    if (subjects.length > 0) {
+      const unapproved = subjects.filter((s) => s.approval_status !== 'APPROVED');
+      if (unapproved.length > 0) {
+        const rejected = unapproved.find((s) => s.approval_status === 'REJECTED');
+        if (rejected) {
+          throw new Error(
+            `Academic Approval Blocked: Attendance for subject "${rejected.subject_name}" was rejected by ${rejected.faculty_name}. Issue must be corrected and approved before proceeding.`
+          );
+        }
+        const correction = unapproved.find((s) => s.approval_status === 'CORRECTION_REQUIRED');
+        if (correction) {
+          throw new Error(
+            `Academic Approval Blocked: Subject "${correction.subject_name}" has corrections pending requested by ${correction.faculty_name}. Re-review and approval required.`
+          );
+        }
+        const unentered = unapproved.find((s) => s.status !== 'ENTERED' || s.attendance_percentage === null);
+        if (unentered) {
+          throw new Error(
+            `Academic Approval Blocked: Attendance has not been entered for subject "${unentered.subject_name}" (Assigned Teacher: ${unentered.faculty_name}).`
+          );
+        }
+        const pendingApproval = unapproved[0];
+        const approvedCount = subjects.length - unapproved.length;
+        throw new Error(
+          `Academic Approval Blocked: Subject "${pendingApproval.subject_name}" is awaiting explicit approval from teacher ${pendingApproval.faculty_name}. (${approvedCount} of ${subjects.length} subject teachers approved).`
+        );
+      }
     }
 
     const prevStatus = req.faculty_status;
@@ -1886,12 +2811,13 @@ export const Engine = {
 
     const req = requests[reqIdx];
 
-    // Section 26.F.5: The faculty member can review only requests within their authorized scope
+    // Section 26.F.5, 32.C & 34.E: The faculty member can review only requests within their authorized scope and department
     if (faculty.role === 'faculty') {
-      const isAssigned = req.assigned_faculty_id === facultyId;
-      const isSameDept = faculty.department && req.department && faculty.department.toLowerCase() === req.department.toLowerCase();
-      if (!isAssigned && !isSameDept) {
-        throw new Error('Unauthorized: You are not authorized to review clearance requests outside your assigned scope or department.');
+      const isAssigned = req.assigned_faculty_id === facultyId ||
+        (req.assigned_faculty_ids && req.assigned_faculty_ids.includes(facultyId));
+      const isSameDept = this.isDepartmentMatch(faculty.department_id || faculty.department, req.department);
+      if (!isAssigned || !isSameDept) {
+        throw new Error('Access Denied: Faculty members can only review clearance requests within their assigned scope and authorized department.');
       }
     }
 
@@ -1961,6 +2887,17 @@ export const Engine = {
     if (reqIdx === -1) throw new Error('Request not found');
 
     const req = requests[reqIdx];
+
+    // Section 26.F.5, 32.C & 34.E: The faculty member can review only requests within their authorized scope and department
+    if (faculty.role === 'faculty') {
+      const isAssigned = req.assigned_faculty_id === facultyId ||
+        (req.assigned_faculty_ids && req.assigned_faculty_ids.includes(facultyId));
+      const isSameDept = this.isDepartmentMatch(faculty.department_id || faculty.department, req.department);
+      if (!isAssigned || !isSameDept) {
+        throw new Error('Access Denied: Faculty members can only review clearance requests within their assigned scope and authorized department.');
+      }
+    }
+
     if (!req.faculty_review_started_at) {
       req.faculty_review_started_at = new Date().toISOString();
       req.faculty_review_started_by = facultyId;
@@ -1986,7 +2923,8 @@ export const Engine = {
   // Student / Admin Teacher Reassignment with Strict Lock when Review Begins
   reassignTeacher(params: {
     requestId: string;
-    newFacultyId: string;
+    newFacultyId?: string;
+    newFacultyIds?: string[];
     userId: string;
     role: 'student' | 'admin';
     reason?: string;
@@ -2004,7 +2942,7 @@ export const Engine = {
       if (params.userId !== req.student_id) {
         throw new Error('Unauthorized: You can only change the assigned teacher for your own request.');
       }
-      // Rule 3: Lock teacher changes when review begins
+      // Section 34.F & G: Lock student teacher changes when review begins
       if (req.faculty_review_started_at || req.faculty_status !== 'PENDING') {
         throw new Error('Cannot change assigned teacher because faculty review has already commenced.');
       }
@@ -2012,40 +2950,68 @@ export const Engine = {
       throw new Error('Unauthorized: Only the student before review commences or an authorized Administrator may reassign requests.');
     }
 
-    // 2. Validate new teacher
-    const newFaculty = profiles.find(
-      (p) =>
-        p.id === params.newFacultyId &&
-        p.role === 'faculty' &&
-        p.is_active &&
-        p.is_verified !== false &&
-        p.verification_status === 'VERIFIED' &&
-        (p.department_id === req.department ||
-          p.department?.toLowerCase() === req.department?.toLowerCase() ||
-          (student &&
-            (p.department_id === student.department_id ||
-              p.department?.toLowerCase() === student.department?.toLowerCase())))
-    );
-
-    if (!newFaculty) {
-      throw new Error('The selected replacement teacher is not active or not authorized for this department.');
+    // 2. Validate replacement faculty members
+    const targetIds: string[] = [];
+    if (params.newFacultyIds && Array.isArray(params.newFacultyIds) && params.newFacultyIds.length > 0) {
+      targetIds.push(...params.newFacultyIds);
+    } else if (params.newFacultyId) {
+      targetIds.push(params.newFacultyId);
+    }
+    if (targetIds.length === 0) {
+      throw new Error('At least one replacement faculty member must be selected.');
     }
 
-    if (newFaculty.id === req.assigned_faculty_id) {
+    const validatedFaculty: UserProfile[] = [];
+    for (const fid of targetIds) {
+      const newFaculty = profiles.find(
+        (p) =>
+          p.id === fid &&
+          p.role === 'faculty' &&
+          p.is_active &&
+          p.is_verified !== false &&
+          p.verification_status === 'VERIFIED' &&
+          (p.department_id === req.department ||
+            p.department?.toLowerCase() === req.department?.toLowerCase() ||
+            (student &&
+              (p.department_id === student.department_id ||
+                p.department?.toLowerCase() === student.department?.toLowerCase())))
+      );
+      if (!newFaculty) {
+        throw new Error('The selected replacement teacher is not active or not authorized for this department.');
+      }
+      validatedFaculty.push(newFaculty);
+    }
+
+    const currentIds = req.assigned_faculty_ids && req.assigned_faculty_ids.length > 0
+      ? req.assigned_faculty_ids
+      : (req.assigned_faculty_id ? [req.assigned_faculty_id] : []);
+
+    if (targetIds.length === 1 && currentIds.length === 1 && targetIds[0] === currentIds[0]) {
       throw new Error('The selected teacher is already assigned to this request.');
     }
 
     // 3. Create immutable reassignment record
     const prevFacultyId = req.assigned_faculty_id || '';
     const prevFacultyName = req.assigned_faculty_name || 'Unassigned';
+    const prevFacultyIds = [...currentIds];
+    const prevFacultyNames = req.assigned_faculty_names || [prevFacultyName];
+
+    const newFacultyId = validatedFaculty[0].id;
+    const newFacultyName = validatedFaculty[0].full_name;
+    const newFacultyIds = validatedFaculty.map((f) => f.id);
+    const newFacultyNames = validatedFaculty.map((f) => f.full_name);
 
     const record: TeacherReassignmentRecord = {
       id: `reass-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       request_id: req.id,
       previous_faculty_id: prevFacultyId,
       previous_faculty_name: prevFacultyName,
-      new_faculty_id: newFaculty.id,
-      new_faculty_name: newFaculty.full_name,
+      previous_faculty_ids: prevFacultyIds,
+      previous_faculty_names: prevFacultyNames,
+      new_faculty_id: newFacultyId,
+      new_faculty_name: newFacultyName,
+      new_faculty_ids: newFacultyIds,
+      new_faculty_names: newFacultyNames,
       initiated_by_user_id: params.userId,
       initiated_by_role: params.role,
       reason:
@@ -2055,9 +3021,11 @@ export const Engine = {
       created_at: new Date().toISOString(),
     };
 
-    // 4. Update request without changing request ID
-    req.assigned_faculty_id = newFaculty.id;
-    req.assigned_faculty_name = newFaculty.full_name;
+    // 4. Update request without changing request ID, created date, or downstream clearances (Section 34.G)
+    req.assigned_faculty_id = newFacultyId;
+    req.assigned_faculty_name = newFacultyName;
+    req.assigned_faculty_ids = newFacultyIds;
+    req.assigned_faculty_names = newFacultyNames;
     req.faculty_assignment_status = 'ASSIGNED';
     req.reassignment_history = [...(req.reassignment_history || []), record];
     req.updated_at = new Date().toISOString();
@@ -2067,8 +3035,8 @@ export const Engine = {
 
     // 5. Update student profile and academic record
     if (student) {
-      student.assigned_faculty_id = newFaculty.id;
-      student.assigned_faculty_name = newFaculty.full_name;
+      student.assigned_faculty_id = newFacultyId;
+      student.assigned_faculty_name = newFacultyName;
       const sIdx = profiles.findIndex((p) => p.id === student.id);
       if (sIdx !== -1) {
         profiles[sIdx] = student;
@@ -2084,36 +3052,109 @@ export const Engine = {
         a.semester === req.semester
     );
     if (acad) {
-      acad.faculty_id = newFaculty.id;
+      acad.faculty_id = newFacultyId;
       set(STORAGE_KEYS.ACADEMIC_RECORDS, acads);
     }
 
-    // 6. Notifications
-    this.createNotification(
-      newFaculty.id,
-      'No-Due Clearance Request Assigned to You',
-      `Clearance request ${req.request_code} for student ${student?.full_name || req.student_id} has been assigned to you.`,
-      'action_required',
-      '/faculty'
+    // 6. Section 34.G & 34.H: Update relational request faculty assignments
+    const reqAssignments = this.getRequestFacultyAssignments();
+    const remainingAssignments = reqAssignments.filter(
+      (a) => !(a.request_id === req.id && a.role === 'academic_verification')
     );
+    validatedFaculty.forEach((f) => {
+      remainingAssignments.push({
+        id: `rfa-${req.id}-${f.id}-av`,
+        request_id: req.id,
+        faculty_id: f.id,
+        faculty_name: f.full_name,
+        role: 'academic_verification',
+        status: 'ASSIGNED',
+        assigned_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    });
+    set(STORAGE_KEYS.REQUEST_FACULTY_ASSIGNMENTS, remainingAssignments);
+
+    // Update pending faculty review tasks
+    const reviewTasks = this.getFacultyReviewTasks();
+    const remainingTasks = reviewTasks.filter(
+      (t) => !(t.request_id === req.id && t.task_type === 'academic_verification')
+    );
+    validatedFaculty.forEach((f) => {
+      remainingTasks.push({
+        id: `task-av-${req.id}-${f.id}`,
+        request_id: req.id,
+        faculty_id: f.id,
+        task_type: 'academic_verification',
+        status: 'PENDING',
+        created_at: new Date().toISOString(),
+      });
+    });
+    set(STORAGE_KEYS.FACULTY_REVIEW_TASKS, remainingTasks);
+
+    // Section 34.G & 35.6: Reassign subject attendance tasks if new faculty teaches that subject, preserving entered records and decision history
+    const subRecords = this.getSubjectAttendanceRecords();
+    subRecords.forEach((s) => {
+      if (s.request_id === req.id) {
+        const matchingFac = validatedFaculty.find((vf) => {
+          if (!vf.subjects) return false;
+          const subs = Array.isArray(vf.subjects) ? vf.subjects : [String(vf.subjects)];
+          return subs.some((subName) => subName.toLowerCase() === s.subject_name.toLowerCase());
+        });
+        if (matchingFac && matchingFac.id !== s.faculty_id) {
+          const oldFacultyId = s.faculty_id;
+          const oldFacultyName = s.faculty_name;
+          s.faculty_id = matchingFac.id;
+          s.faculty_name = matchingFac.full_name;
+          // Section 35.6: Do not silently transfer old teacher approval to new teacher
+          if (s.approval_status === 'APPROVED') {
+            s.approval_status = 'AWAITING_APPROVAL';
+            s.is_locked = false;
+          }
+          s.updated_at = new Date().toISOString();
+
+          this.logAudit(
+            params.userId,
+            params.role,
+            'REASSIGN_SUBJECT_TEACHER',
+            'subject_attendance_records',
+            s.id,
+            { previous_faculty_id: oldFacultyId, previous_faculty_name: oldFacultyName },
+            { new_faculty_id: matchingFac.id, new_faculty_name: matchingFac.full_name, subject: s.subject_name }
+          );
+        }
+      }
+    });
+    set(STORAGE_KEYS.SUBJECT_ATTENDANCE, subRecords);
+
+    // 7. Notifications
+    validatedFaculty.forEach((f) => {
+      this.createNotification(
+        f.id,
+        'No-Due Clearance Request Assigned to You',
+        `Clearance request ${req.request_code} for student ${student?.full_name || req.student_id} has been assigned to you.`,
+        'action_required',
+        '/faculty'
+      );
+    });
 
     this.createNotification(
       req.student_id,
       'Teacher Assignment Updated',
-      `Your No-Due request ${req.request_code} has been successfully assigned to ${newFaculty.full_name}.`,
+      `Your No-Due request ${req.request_code} has been successfully assigned to ${newFacultyNames.join(', ')}.`,
       'success',
       '/student'
     );
 
-    // 7. Audit log
+    // 8. Audit log
     this.logAudit(
       params.userId,
       params.role,
       'REASSIGN_REQUEST_TEACHER',
       'no_due_requests',
       req.id,
-      { previous_faculty_id: prevFacultyId, previous_faculty_name: prevFacultyName },
-      { new_faculty_id: newFaculty.id, new_faculty_name: newFaculty.full_name, reason: record.reason }
+      { previous_faculty_id: prevFacultyId, previous_faculty_name: prevFacultyName, previous_faculty_ids: prevFacultyIds },
+      { new_faculty_id: newFacultyId, new_faculty_name: newFacultyName, new_faculty_ids: newFacultyIds, reason: record.reason }
     );
 
     return { request: this.getRequestById(req.id)!, record };
@@ -2135,7 +3176,7 @@ export const Engine = {
     return result.request;
   },
 
-  // Faculty Work Queue (Section 26.F.4 & 26.F.5 & 28.D)
+  // Faculty Work Queue (Section 26.F.4, 26.F.5, 32.C & 34.E)
   getRequestsForFaculty(facultyId: string): NoDueRequest[] {
     const faculty = this.getProfileById(facultyId);
     if (!faculty || faculty.role !== 'faculty' || faculty.is_verified === false || faculty.verification_status !== 'VERIFIED') return [];
@@ -2143,9 +3184,69 @@ export const Engine = {
     const allRequests = this.getRequests();
     return allRequests.filter(
       (r) =>
-        r.assigned_faculty_id === facultyId &&
-        r.faculty_assignment_status === 'ASSIGNED'
+        (r.assigned_faculty_id === facultyId || (r.assigned_faculty_ids && r.assigned_faculty_ids.includes(facultyId))) &&
+        r.faculty_assignment_status === 'ASSIGNED' &&
+        this.isDepartmentMatch(faculty.department_id || faculty.department, r.department)
     );
+  },
+
+  // HOD Work Queue (Section 32.C & 32.D: Strict Department Isolation)
+  getRequestsForHod(hodId: string): NoDueRequest[] {
+    const hod = this.getProfileById(hodId);
+    if (!hod) return [];
+    if (hod.role === 'admin') return this.getRequests();
+    if (hod.role !== 'hod' || !hod.is_active || hod.is_verified === false || hod.verification_status !== 'VERIFIED') return [];
+
+    const allRequests = this.getRequests();
+    return allRequests.filter((r) =>
+      this.isDepartmentMatch(hod.department_id || hod.department, r.department)
+    );
+  },
+
+  // Authority Clearance Work Queue with Department-Level Scope Isolation (Section 32.C & 32.D)
+  getClearanceDataForAuthority(authority: AuthorityType, userId?: string) {
+    const items = this.getClearanceItems().filter((ci) => ci.authority === authority);
+    const requests = this.getRequests();
+    const payments = this.getPayments();
+    const user = userId ? this.getProfileById(userId) : undefined;
+
+    let filteredItems = items;
+    if (user && user.role !== 'admin') {
+      // Laboratory Staff strictly restricted to authorized department
+      if (authority === 'lab' || user.role === 'lab_staff') {
+        filteredItems = items.filter((item) => {
+          const req = requests.find((r) => r.id === item.request_id);
+          if (!req) return false;
+          return this.isDepartmentMatch(user.department_id || user.department, req.department);
+        });
+      } else if (user.department_id && user.department_id !== 'dept-central' && user.department_id !== 'all') {
+        const depts = this.getDepartments();
+        const isConfiguredDept = depts.some((d) => d.id === user.department_id);
+        if (isConfiguredDept) {
+          filteredItems = items.filter((item) => {
+            const req = requests.find((r) => r.id === item.request_id);
+            if (!req) return false;
+            return this.isDepartmentMatch(user.department_id || user.department, req.department);
+          });
+        }
+      }
+    }
+
+    const itemsWithDetails = filteredItems.map((item) => {
+      const req = requests.find((r) => r.id === item.request_id);
+      const sub = payments.find((p) => p.clearance_item_id === item.id);
+      return {
+        ...item,
+        request: req,
+        latest_submission: sub,
+      };
+    });
+
+    const activeQr = this.getActiveQrForAuthority(authority) || null;
+    return {
+      items: itemsWithDetails,
+      activeQr,
+    };
   },
 
   // ----------------------------------------------------------------------------
@@ -2189,14 +3290,32 @@ export const Engine = {
       );
     }
 
+    // Section 35.4 & Acceptance Test 7: Bypass protection - all subject teacher approvals must be complete
+    const subjects = this.getSubjectAttendanceForStudent(req.student_id, req.id);
+    if (subjects.length > 0 && subjects.some((s) => s.approval_status !== 'APPROVED')) {
+      throw new Error(
+        'Clearance Review Blocked: All subject teacher attendance approvals must be completed before departmental clearance can be decided.'
+      );
+    }
+
     // Enforce server-side authority role boundaries
     const authorityRoleMap: Record<string, string> = {
       library: 'library_staff',
       accounts: 'accounts_staff',
       lab: 'lab_staff',
     };
-    if (reviewer.role !== 'admin' && reviewer.role !== authorityRoleMap[item.authority]) {
+    if (reviewer.role === 'admin') {
+      throw new Error('Unauthorized: Administrative oversight is separate from clearance authority. Admin cannot directly approve departmental clearance decisions.');
+    }
+    if (reviewer.role !== authorityRoleMap[item.authority]) {
       throw new Error(`Unauthorized: Role '${reviewer.role}' is not authorized to decide on ${item.authority} clearance.`);
+    }
+
+    // Section 32.C & 32.D: Strict Department-Level Data Isolation for Laboratory Staff
+    if (reviewer.role === 'lab_staff') {
+      if (!this.isDepartmentMatch(reviewer.department_id || reviewer.department, req.department)) {
+        throw new Error('Access Denied: Laboratory staff are strictly restricted to clearance requests within their authorized department.');
+      }
     }
 
     const prevItemStatus = item.status;
@@ -2465,6 +3584,14 @@ export const Engine = {
 
     const req = requests[reqIdx];
     const reviewer = this.getProfileById(params.reviewerId);
+    if (!reviewer) throw new Error('Reviewer not found');
+
+    // Section 32.C: Laboratory Staff payment verification restricted to same department
+    if (reviewer.role === 'lab_staff') {
+      if (!this.isDepartmentMatch(reviewer.department_id || reviewer.department, req.department)) {
+        throw new Error('Access Denied: Laboratory staff cannot access or review payment submissions outside their assigned department.');
+      }
+    }
 
     if (params.confirm) {
       submission.verification_status = 'CONFIRMED';
@@ -2563,6 +3690,13 @@ export const Engine = {
     if (reqIdx === -1) throw new Error('Request not found');
 
     const req = requests[reqIdx];
+
+    // Section 32.C & 32.D: Strict Department Isolation for HOD
+    if (hod.role === 'hod') {
+      if (!this.isDepartmentMatch(hod.department_id || hod.department, req.department)) {
+        throw new Error('Access Denied: Head of Department can only review and finalize clearance requests within their authorized department.');
+      }
+    }
 
     if (params.decision === 'approve') {
       // Rule 4 & 6: HOD approval is strictly impossible until ALL 4 are approved!

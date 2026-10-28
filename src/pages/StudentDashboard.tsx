@@ -44,6 +44,7 @@ import {
   History,
   User,
   X,
+  XCircle,
 } from 'lucide-react';
 
 export const StudentDashboard: React.FC = () => {
@@ -66,6 +67,7 @@ export const StudentDashboard: React.FC = () => {
   // Change Teacher modal state (allowed until first faculty review begins)
   const [showChangeTeacherModal, setShowChangeTeacherModal] = useState(false);
   const [departmentTeachers, setDepartmentTeachers] = useState<UserProfile[]>([]);
+  const [selectedNewTeacherIds, setSelectedNewTeacherIds] = useState<string[]>([]);
   const [selectedNewTeacherId, setSelectedNewTeacherId] = useState<string>('');
   const [changeTeacherReason, setChangeTeacherReason] = useState<string>('');
   const [isChangingTeacher, setIsChangingTeacher] = useState(false);
@@ -131,18 +133,34 @@ export const StudentDashboard: React.FC = () => {
     }
   };
 
+  const toggleNewTeacherSelection = (teacherId: string) => {
+    setSelectedNewTeacherIds((prev) => {
+      const next = prev.includes(teacherId)
+        ? prev.filter((id) => id !== teacherId)
+        : [...prev, teacherId];
+      setSelectedNewTeacherId(next[0] || '');
+      return next;
+    });
+  };
+
   const openChangeTeacherModal = async () => {
     if (!activeRequest || !user) return;
     try {
       setChangeTeacherError(null);
       setChangeTeacherSuccess(null);
       const faculty = await api.getFacultyForDepartment(user.department_id || user.department);
-      // Filter to eligible faculty, excluding currently assigned
       setDepartmentTeachers(faculty);
-      const otherTeachers = faculty.filter((t) => t.id !== activeRequest.assigned_faculty_id);
-      if (otherTeachers.length > 0) {
-        setSelectedNewTeacherId(otherTeachers[0].id);
+
+      const currentlyAssignedIds = (activeRequest.assigned_faculty_ids && activeRequest.assigned_faculty_ids.length > 0)
+        ? activeRequest.assigned_faculty_ids
+        : (activeRequest.assigned_faculty_id ? [activeRequest.assigned_faculty_id] : []);
+
+      const eligibleOthers = faculty.filter((t) => !currentlyAssignedIds.includes(t.id));
+      if (eligibleOthers.length > 0) {
+        setSelectedNewTeacherIds([eligibleOthers[0].id]);
+        setSelectedNewTeacherId(eligibleOthers[0].id);
       } else {
+        setSelectedNewTeacherIds([]);
         setSelectedNewTeacherId('');
       }
       setShowChangeTeacherModal(true);
@@ -154,14 +172,15 @@ export const StudentDashboard: React.FC = () => {
 
   const handleConfirmChangeTeacher = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeRequest || !user || !selectedNewTeacherId) return;
+    if (!activeRequest || !user || selectedNewTeacherIds.length === 0) return;
     try {
       setIsChangingTeacher(true);
       setChangeTeacherError(null);
 
       const result = await api.reassignTeacher({
         requestId: activeRequest.id,
-        newFacultyId: selectedNewTeacherId,
+        newFacultyIds: selectedNewTeacherIds,
+        newFacultyId: selectedNewTeacherIds[0],
         userId: user.id,
         role: 'student',
         reason: changeTeacherReason.trim() || undefined,
@@ -169,12 +188,13 @@ export const StudentDashboard: React.FC = () => {
 
       setShowChangeTeacherModal(false);
       setChangeTeacherReason('');
+      const names = result.request.assigned_faculty_names?.join(', ') || result.request.assigned_faculty_name;
       setChangeTeacherSuccess(
-        `Teacher assignment updated: Request ${activeRequest.request_code} has been successfully assigned to ${result.request.assigned_faculty_name}.`
+        `Faculty assignment updated: Request ${activeRequest.request_code} has been successfully reassigned to ${names}.`
       );
       await loadData();
     } catch (err: any) {
-      setChangeTeacherError(err.message || 'Teacher reassignment rejected.');
+      setChangeTeacherError(err.message || 'Faculty reassignment rejected.');
     } finally {
       setIsChangingTeacher(false);
     }
@@ -188,8 +208,16 @@ export const StudentDashboard: React.FC = () => {
     );
   }
 
-  const isEligibleForAcademic = academicRecord
-    ? academicRecord.attendance_percentage >= threshold
+  const hasAttendanceEntered =
+    academicRecord?.attendance_percentage !== null &&
+    academicRecord?.attendance_percentage !== undefined &&
+    academicRecord?.attendance_status === 'ENTERED';
+
+  const isAttendanceIncomplete =
+    academicRecord?.attendance_status === 'ATTENDANCE_INCOMPLETE';
+
+  const isEligibleForAcademic = hasAttendanceEntered
+    ? (academicRecord!.attendance_percentage! >= threshold)
     : false;
 
   return (
@@ -223,25 +251,39 @@ export const StudentDashboard: React.FC = () => {
                 <span>•</span>
                 <span className="flex items-center gap-1">
                   <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-                  Advisor: {user.assigned_faculty_name || 'Not Assigned'}
+                  Advisor: {activeRequest?.assigned_faculty_names && activeRequest.assigned_faculty_names.length > 0
+                    ? activeRequest.assigned_faculty_names.join(', ')
+                    : (activeRequest?.assigned_faculty_name || user.assigned_faculty_name || 'Not Assigned')}
                 </span>
               </p>
             </div>
           </div>
 
-          {/* Dynamic Attendance & Eligibility Box (Section 7.2) */}
+          {/* Dynamic Attendance & Eligibility Box (Section 7.2 & 33.E) */}
           <div className="flex items-center gap-4 p-4 rounded-2xl bg-slate-900/90 border border-slate-700/80">
             <div className="text-right">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                 Term Attendance
               </span>
               <div className="flex items-baseline justify-end gap-1">
-                <span className="text-2xl font-black text-slate-100 font-mono">
-                  {academicRecord?.attendance_percentage ?? 0}%
-                </span>
-                <span className="text-[11px] text-slate-400">
-                  / min {threshold}%
-                </span>
+                {hasAttendanceEntered ? (
+                  <>
+                    <span className="text-2xl font-black text-slate-100 font-mono">
+                      {academicRecord.attendance_percentage}%
+                    </span>
+                    <span className="text-[11px] text-slate-400">
+                      / min {threshold}%
+                    </span>
+                  </>
+                ) : isAttendanceIncomplete ? (
+                  <span className="text-xs font-bold text-amber-300 bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/30">
+                    Attendance Incomplete
+                  </span>
+                ) : (
+                  <span className="text-xs font-bold text-slate-300 bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700">
+                    Awaiting Faculty Entry
+                  </span>
+                )}
               </div>
             </div>
 
@@ -251,15 +293,27 @@ export const StudentDashboard: React.FC = () => {
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
                 Eligibility
               </span>
-              {isEligibleForAcademic ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold shadow-sm shadow-emerald-500/20">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                  ELIGIBLE
+              {hasAttendanceEntered ? (
+                isEligibleForAcademic ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold shadow-sm shadow-emerald-500/20">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    ELIGIBLE
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-bold">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                    SHORTAGE (&lt;{threshold}%)
+                  </span>
+                )
+              ) : isAttendanceIncomplete ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold">
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                  PARTIAL
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-bold">
-                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-                  SHORTAGE
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-800 text-slate-400 border border-slate-700 text-xs font-bold">
+                  <Clock className="w-3.5 h-3.5 text-slate-400" />
+                  PENDING
                 </span>
               )}
             </div>
@@ -339,10 +393,12 @@ export const StudentDashboard: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                    Assigned Academic Faculty Advisor
+                    Assigned Academic Faculty Advisor(s)
                   </span>
                   <p className="font-bold text-slate-100 text-sm">
-                    {activeRequest.assigned_faculty_name || user.assigned_faculty_name || 'Not Assigned'}
+                    {activeRequest.assigned_faculty_names && activeRequest.assigned_faculty_names.length > 0
+                      ? activeRequest.assigned_faculty_names.join(', ')
+                      : (activeRequest.assigned_faculty_name || user.assigned_faculty_name || 'Not Assigned')}
                   </p>
                   <p className="text-[11px] text-slate-400">
                     Status:{' '}
@@ -419,6 +475,152 @@ export const StudentDashboard: React.FC = () => {
             <div className="mt-6">
               <WorkflowTimeline request={activeRequest} />
             </div>
+
+            {/* Subject-Wise Attendance Breakdown & Multi-Subject Approval Status (Section 35.7) */}
+            {academicRecord?.subject_entries && academicRecord.subject_entries.length > 0 && (
+              <div className="mt-6 p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400">
+                      <GraduationCap className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-100">Subject Attendance & Teacher Approvals</h4>
+                      <p className="text-[11px] text-slate-400">
+                        Section 35: Each subject teacher enters and explicitly approves attendance before academic verification can proceed
+                      </p>
+                    </div>
+                  </div>
+                  {(() => {
+                    const totalSubs = academicRecord.subject_entries.length;
+                    const approvedSubs = academicRecord.subject_entries.filter((s) => s.approval_status === 'APPROVED').length;
+                    const allApproved = totalSubs > 0 && approvedSubs === totalSubs;
+                    return (
+                      <span className={`text-[11px] font-bold px-3 py-1 rounded-xl border flex items-center gap-1.5 ${
+                        allApproved
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                      }`}>
+                        {allApproved ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Clock className="w-3.5 h-3.5 text-amber-400" />}
+                        {approvedSubs} of {totalSubs} Teachers Approved
+                      </span>
+                    );
+                  })()}
+                </div>
+
+                {/* Workflow Gating Explanation Banner (Section 35.7) */}
+                {(() => {
+                  const unapproved = academicRecord.subject_entries.filter((s) => s.approval_status !== 'APPROVED');
+                  if (unapproved.length === 0) return null;
+                  const rejected = unapproved.find((s) => s.approval_status === 'REJECTED');
+                  const correction = unapproved.find((s) => s.approval_status === 'CORRECTION_REQUIRED');
+
+                  return (
+                    <div className={`p-3.5 rounded-xl border text-xs flex items-start gap-2.5 ${
+                      rejected
+                        ? 'bg-rose-950/30 border-rose-800/50 text-rose-300'
+                        : correction
+                        ? 'bg-purple-950/30 border-purple-800/50 text-purple-300'
+                        : 'bg-amber-950/30 border-amber-800/50 text-amber-300'
+                    }`}>
+                      <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold">Next Workflow Stage Blocked</p>
+                        <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
+                          {rejected
+                            ? `Subject "${rejected.subject_name}" attendance was rejected by ${rejected.faculty_name}. Issue must be corrected and approved.`
+                            : correction
+                            ? `Subject "${correction.subject_name}" has corrections requested by ${correction.faculty_name}. Re-review is pending.`
+                            : `Clearance progress is paused awaiting attendance approvals for: ${unapproved
+                                .map((s) => `${s.subject_name} (${s.faculty_name})`)
+                                .join(', ')}.`}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {academicRecord.subject_entries.map((sub) => {
+                    const isEntered = sub.status === 'ENTERED' && sub.attendance_percentage !== null;
+                    const isApproved = sub.approval_status === 'APPROVED';
+                    const isRejected = sub.approval_status === 'REJECTED';
+                    const isCorrection = sub.approval_status === 'CORRECTION_REQUIRED';
+
+                    return (
+                      <div
+                        key={sub.id}
+                        className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-2 hover:border-slate-700 transition"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-xs font-bold text-slate-200 line-clamp-1">{sub.subject_name}</p>
+                          {isEntered ? (
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
+                              sub.attendance_percentage! >= threshold
+                                ? 'bg-emerald-500/20 text-emerald-300'
+                                : 'bg-rose-500/20 text-rose-300'
+                            }`}>
+                              {sub.attendance_percentage}%
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px] font-bold">
+                              Attendance Not Entered
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                          <span className="text-slate-500">Teacher:</span>
+                          <span className="text-slate-300 font-medium">{sub.faculty_name}</span>
+                        </p>
+
+                        {(typeof sub.classes_held === 'number' || typeof (sub as any).classes_conducted === 'number') && typeof sub.classes_attended === 'number' && (
+                          <p className="text-[10px] text-slate-400 font-mono">
+                            Attended: <span className="font-semibold text-slate-200">{sub.classes_attended}</span> / {sub.classes_held ?? (sub as any).classes_conducted} classes
+                          </p>
+                        )}
+
+                        {/* Approval Status Badge */}
+                        <div className="pt-1">
+                          {isApproved ? (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold inline-flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                              Approved by {sub.approved_by_name || sub.faculty_name}
+                            </span>
+                          ) : isRejected ? (
+                            <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-bold inline-flex items-center gap-1">
+                              <XCircle className="w-3 h-3 text-rose-400" />
+                              Rejected
+                            </span>
+                          ) : isCorrection ? (
+                            <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[10px] font-bold inline-flex items-center gap-1">
+                              <RotateCcw className="w-3 h-3 text-purple-400" />
+                              Correction Required
+                            </span>
+                          ) : isEntered ? (
+                            <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold inline-flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-amber-400" />
+                              Attendance Entered — Awaiting Approval
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-bold inline-flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-slate-400" />
+                              Waiting for Attendance
+                            </span>
+                          )}
+                        </div>
+
+                        {(sub.approval_remarks || sub.rejection_remarks || sub.remarks) && (
+                          <p className="text-[10px] text-slate-400 italic line-clamp-1 border-t border-slate-800/60 pt-1">
+                            "{sub.approval_remarks || sub.rejection_remarks || sub.remarks}"
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 3. Final Clearance & Hall Ticket Card (Sections 4 & 14) */}
@@ -830,61 +1032,80 @@ export const StudentDashboard: React.FC = () => {
               </div>
             )}
 
-            <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-1">
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-1.5">
               <span className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">
-                Current Assigned Faculty
+                Currently Assigned Faculty Advisor(s)
               </span>
-              <p className="font-bold text-slate-200">
-                {activeRequest.assigned_faculty_name || 'Not Assigned'}
+              <p className="font-bold text-slate-100 text-sm">
+                {activeRequest.assigned_faculty_names && activeRequest.assigned_faculty_names.length > 0
+                  ? activeRequest.assigned_faculty_names.join(', ')
+                  : (activeRequest.assigned_faculty_name || 'Not Assigned')}
               </p>
               <p className="text-[11px] text-slate-400">
-                Department: {user.department} • Request: {activeRequest.request_code}
+                Department: <span className="text-blue-300 font-medium">{user.department}</span> • Request: <span className="font-mono text-slate-300">{activeRequest.request_code}</span>
               </p>
             </div>
 
             <form onSubmit={handleConfirmChangeTeacher} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
-                  Select New Authorized Faculty Advisor <span className="text-blue-400">*</span>
-                </label>
-                {departmentTeachers.filter((t) => t.id !== activeRequest.assigned_faculty_id).length === 0 ? (
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                    Select Replacement Faculty Advisor(s) <span className="text-blue-400">*</span>
+                  </label>
+                  <span className="text-[11px] font-mono text-blue-400 font-bold bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
+                    {selectedNewTeacherIds.length} Selected
+                  </span>
+                </div>
+                {departmentTeachers.filter((t) => {
+                  const assignedIds = activeRequest.assigned_faculty_ids && activeRequest.assigned_faculty_ids.length > 0
+                    ? activeRequest.assigned_faculty_ids
+                    : [activeRequest.assigned_faculty_id];
+                  return !assignedIds.includes(t.id);
+                }).length === 0 ? (
                   <p className="text-xs text-amber-300 p-3 rounded-xl bg-amber-950/30 border border-amber-500/30">
                     No alternative active faculty members are currently available in your department.
                   </p>
                 ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
                     {departmentTeachers
-                      .filter((t) => t.id !== activeRequest.assigned_faculty_id)
-                      .map((teacher) => (
-                        <label
-                          key={teacher.id}
-                          className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
-                            selectedNewTeacherId === teacher.id
-                              ? 'bg-blue-600/20 border-blue-500 text-white'
-                              : 'bg-slate-900/60 border-slate-700/80 text-slate-300 hover:border-slate-600'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <input
-                              type="radio"
-                              name="newTeacher"
-                              value={teacher.id}
-                              checked={selectedNewTeacherId === teacher.id}
-                              onChange={() => setSelectedNewTeacherId(teacher.id)}
-                              className="accent-blue-500"
-                            />
-                            <div>
-                              <p className="font-bold text-xs text-slate-100">{teacher.full_name}</p>
-                              <p className="text-[10px] text-blue-400">
-                                {teacher.designation || 'Faculty Advisor'} • {teacher.email}
-                              </p>
+                      .filter((t) => {
+                        const assignedIds = activeRequest.assigned_faculty_ids && activeRequest.assigned_faculty_ids.length > 0
+                          ? activeRequest.assigned_faculty_ids
+                          : [activeRequest.assigned_faculty_id];
+                        return !assignedIds.includes(t.id);
+                      })
+                      .map((teacher) => {
+                        const isSelected = selectedNewTeacherIds.includes(teacher.id);
+                        return (
+                          <div
+                            key={teacher.id}
+                            onClick={() => toggleNewTeacherSelection(teacher.id)}
+                            className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition select-none ${
+                              isSelected
+                                ? 'bg-blue-600/20 border-blue-500 text-white ring-1 ring-blue-500/40'
+                                : 'bg-slate-900/60 border-slate-700/80 text-slate-300 hover:border-slate-600'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => {}}
+                                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 bg-slate-950 border-slate-700 pointer-events-none"
+                              />
+                              <div>
+                                <p className="font-bold text-xs text-slate-100">{teacher.full_name}</p>
+                                <p className="text-[10px] text-blue-400">
+                                  {teacher.designation || 'Faculty Advisor'} • {teacher.email}
+                                </p>
+                              </div>
                             </div>
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                              Active
+                            </span>
                           </div>
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                            Active
-                          </span>
-                        </label>
-                      ))}
+                        );
+                      })}
                   </div>
                 )}
               </div>
@@ -903,9 +1124,9 @@ export const StudentDashboard: React.FC = () => {
               </div>
 
               <div className="p-3 rounded-xl bg-blue-950/20 border border-blue-900/40 text-[11px] text-blue-300 space-y-1">
-                <p className="font-bold">Important Notice:</p>
+                <p className="font-bold">Workflow Continuity Protection:</p>
                 <p className="text-slate-300 leading-relaxed">
-                  Upon confirmation, the request will immediately appear in the new teacher's queue and an audit record will be logged. Once the faculty member commences review, teacher changes will be permanently locked.
+                  Changing faculty preserves your request ID, submission date, all valid attendance records, and any completed clearance stages (such as Library, Accounts, or Lab). Only pending academic review tasks are routed to the newly assigned faculty.
                 </p>
               </div>
 
@@ -919,7 +1140,7 @@ export const StudentDashboard: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={isChangingTeacher || !selectedNewTeacherId}
+                  disabled={isChangingTeacher || selectedNewTeacherIds.length === 0}
                   className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-blue-900/30 disabled:opacity-50"
                 >
                   {isChangingTeacher ? (
@@ -927,7 +1148,7 @@ export const StudentDashboard: React.FC = () => {
                   ) : (
                     <>
                       <Check className="w-3.5 h-3.5" />
-                      <span>Confirm & Reassign Teacher</span>
+                      <span>Confirm & Reassign ({selectedNewTeacherIds.length} Selected)</span>
                     </>
                   )}
                 </button>

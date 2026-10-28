@@ -128,7 +128,7 @@ BEGIN
                 crypt(p_temporary_password, gen_salt('bf')),
                 now(),
                 jsonb_build_object('provider', 'email', 'providers', array['email']),
-                jsonb_build_object('role', 'admin', 'full_name', 'Institutional Administrator', 'must_change_password', true),
+                jsonb_build_object('role', 'admin', 'full_name', 'Dr. Srikantappa As', 'must_change_password', true),
                 now(),
                 now(),
                 'authenticated',
@@ -159,7 +159,7 @@ BEGIN
     ) VALUES (
         v_admin_id,
         'admin',
-        'Institutional Administrator',
+        'Dr. Srikantappa As',
         p_email,
         'CIT-ADM-001',
         'Central Institutional Administration',

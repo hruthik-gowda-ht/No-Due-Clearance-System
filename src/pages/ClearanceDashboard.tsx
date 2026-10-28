@@ -70,25 +70,29 @@ export const ClearanceDashboard: React.FC<ClearanceDashboardProps> = ({ authorit
       description: 'Semester tuition fees, examination dues, institutional reconciliations, and academic ledger audit.',
     },
     lab: {
-      name: 'Computing & Hardware Laboratories Desk',
+      name: user?.department ? `${user.department} Laboratory Desk` : 'Department Laboratory Clearance Desk',
       icon: FlaskConical,
       role: 'lab_staff',
       color: 'amber',
       badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
-      description: 'Workstation hardware, apparatus inspection, consumables, and breakage fee settlement.',
+      description: user?.department
+        ? `Laboratory clearance and apparatus inspections strictly isolated to ${user.department}.`
+        : 'Workstation hardware, apparatus inspection, consumables, and breakage fee settlement.',
     },
   }[authority];
 
   const Icon = meta.icon;
 
   useEffect(() => {
-    loadData();
-  }, [authority]);
+    if (user) {
+      loadData();
+    }
+  }, [authority, user]);
 
   const loadData = async () => {
     try {
       setIsLoading(true);
-      const data = await api.getAuthorityClearanceData(authority);
+      const data = await api.getAuthorityClearanceData(authority, user?.id);
       setItems(data.items);
       setActiveQr(data.activeQr);
 

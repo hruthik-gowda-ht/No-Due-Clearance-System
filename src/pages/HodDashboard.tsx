@@ -42,13 +42,15 @@ export const HodDashboard: React.FC = () => {
   const [notificationMsg, setNotificationMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (user) {
+      loadData();
+    }
+  }, [user]);
 
   const loadData = async () => {
     try {
       setIsLoading(true);
-      const data = await api.getHodDashboardData();
+      const data = await api.getHodDashboardData(user?.id);
       setRequests(data);
     } catch (err) {
       console.error('Failed to load HOD requests:', err);

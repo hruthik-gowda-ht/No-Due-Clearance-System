@@ -35,7 +35,7 @@ export const NewRequest: React.FC = () => {
 
   // Teacher selection state (Dynamic from Database)
   const [teachers, setTeachers] = useState<UserProfile[]>([]);
-  const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null);
+  const [selectedTeacherIds, setSelectedTeacherIds] = useState<string[]>([]);
   const [isLoadingTeachers, setIsLoadingTeachers] = useState(true);
   const [teacherLoadError, setTeacherLoadError] = useState<string | null>(null);
 
@@ -57,26 +57,30 @@ export const NewRequest: React.FC = () => {
     try {
       setIsLoadingTeachers(true);
       setTeacherLoadError(null);
-      // Dynamically query database for active, authorized faculty in student's department
-      const facultyList = await api.getFacultyForDepartment(user.department_id || user.department);
+      // Dynamically query database for active, authorized faculty in student's department and academic period
+      const facultyList = await api.getFacultyForDepartment(
+        user.department_id || user.department,
+        {
+          academic_year: user.academic_year || academicYear,
+          semester: user.semester || semester,
+        }
+      );
       setTeachers(facultyList);
 
-      // If student already had a selected or pre-assigned faculty in this department, retain selection
-      if (selectedTeacherId && facultyList.some((t) => t.id === selectedTeacherId)) {
-        // Keep current selection
-      } else if (user.assigned_faculty_id && facultyList.some((t) => t.id === user.assigned_faculty_id)) {
-        setSelectedTeacherId(user.assigned_faculty_id);
-      } else if (facultyList.length === 1) {
-        setSelectedTeacherId(facultyList[0].id);
-      } else {
-        setSelectedTeacherId(null);
-      }
+      // Section 34.E: Retain valid selections
+      setSelectedTeacherIds((prev) => prev.filter((id) => facultyList.some((t) => t.id === id)));
     } catch (err: any) {
       console.error('Database query failed for department faculty:', err);
       setTeacherLoadError(err.message || 'Database error occurred while retrieving authorized faculty members.');
     } finally {
       setIsLoadingTeachers(false);
     }
+  };
+
+  const toggleTeacherSelection = (teacherId: string) => {
+    setSelectedTeacherIds((prev) =>
+      prev.includes(teacherId) ? prev.filter((id) => id !== teacherId) : [...prev, teacherId]
+    );
   };
 
   if (!user || user.role !== 'student') {
@@ -87,18 +91,21 @@ export const NewRequest: React.FC = () => {
     );
   }
 
-  const selectedTeacher = teachers.find((t) => t.id === selectedTeacherId);
+  const selectedTeachers = teachers.filter((t) => selectedTeacherIds.includes(t.id));
 
   const handleContinueToForm = () => {
-    if (!selectedTeacherId || !selectedTeacher) return;
+    if (selectedTeacherIds.length === 0) {
+      setSubmitError('Please select at least one authorized faculty advisor before continuing.');
+      return;
+    }
     setSubmitError(null);
     setCurrentStep('form');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedTeacherId) {
-      setSubmitError('Please select an authorized faculty member before submitting.');
+    if (selectedTeacherIds.length === 0) {
+      setSubmitError('Please select at least one authorized faculty member before submitting.');
       setCurrentStep('select_teacher');
       return;
     }
@@ -114,7 +121,7 @@ export const NewRequest: React.FC = () => {
         academicYear,
         semester,
         notes,
-        selectedTeacherId
+        selectedTeacherIds
       );
       navigate('/student');
     } catch (err: any) {
@@ -273,18 +280,46 @@ export const NewRequest: React.FC = () => {
                 </div>
               )}
 
+              {/* Selected Teachers Count & Pill Bar */}
+              {selectedTeacherIds.length > 0 && (
+                <div className="p-3.5 rounded-2xl bg-blue-950/40 border border-blue-500/40 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                    <span className="font-bold text-slate-100">
+                      {selectedTeacherIds.length} Faculty Advisor{selectedTeacherIds.length > 1 ? 's' : ''} Selected
+                    </span>
+                    <span className="text-slate-400 text-[11px]">
+                      ({selectedTeachers.map((t) => t.full_name).join(', ')})
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTeacherIds([])}
+                    className="text-[11px] text-slate-400 hover:text-slate-200 underline self-start sm:self-auto"
+                  >
+                    Clear All
+                  </button>
+                </div>
+              )}
+
               {/* D. List of Real, Eligible Teachers */}
               {!isLoadingTeachers && !teacherLoadError && teachers.length > 0 && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   {teachers.map((teacher) => {
-                    const isSelected = selectedTeacherId === teacher.id;
+                    const isSelected = selectedTeacherIds.includes(teacher.id);
+                    const teacherSubjects = teacher.subjects
+                      ? Array.isArray(teacher.subjects)
+                        ? teacher.subjects.join(', ')
+                        : String(teacher.subjects)
+                      : null;
                     return (
                       <div
                         key={teacher.id}
-                        onClick={() => setSelectedTeacherId(teacher.id)}
+                        id={`faculty-option-${teacher.id}`}
+                        onClick={() => toggleTeacherSelection(teacher.id)}
                         className={`p-4 rounded-2xl border cursor-pointer transition relative flex flex-col justify-between ${
                           isSelected
-                            ? 'bg-blue-600/15 border-blue-500 shadow-md shadow-blue-500/10'
+                            ? 'bg-blue-600/15 border-blue-500 shadow-lg shadow-blue-500/10 ring-2 ring-blue-500'
                             : 'bg-slate-900/70 border-slate-700/80 hover:border-slate-600 hover:bg-slate-900'
                         }`}
                       >
@@ -293,35 +328,45 @@ export const NewRequest: React.FC = () => {
                             <div
                               className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold flex-shrink-0 ${
                                 isSelected
-                                  ? 'bg-blue-600 text-white'
+                                  ? 'bg-blue-600 text-white shadow-md'
                                   : 'bg-slate-800 text-slate-300'
                               }`}
                             >
                               <User className="w-5 h-5" />
                             </div>
-                            <div>
+                            <div className="space-y-1">
                               <p className="font-bold text-slate-100 text-sm">
                                 {teacher.full_name}
                               </p>
-                              <p className="text-[11px] text-blue-400 font-medium flex items-center gap-1 mt-0.5">
+                              <p className="text-[11px] text-blue-400 font-medium flex items-center gap-1">
                                 <Briefcase className="w-3 h-3" />
                                 {teacher.designation || 'Faculty / Academic Mentor'}
                               </p>
-                              <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-1 font-mono">
+                              <p className="text-[11px] text-slate-400 flex items-center gap-1 font-mono">
                                 <Mail className="w-3 h-3" />
                                 {teacher.email}
                               </p>
+                              {teacherSubjects && (
+                                <p className="text-[10px] text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700/60 inline-block">
+                                  <span className="text-slate-400 font-medium">Subjects:</span> {teacherSubjects}
+                                </p>
+                              )}
+                              {teacher.semester && (
+                                <p className="text-[10px] text-indigo-300 bg-indigo-950/40 px-2 py-0.5 rounded border border-indigo-500/30 inline-block ml-1">
+                                  Semester {teacher.semester}
+                                </p>
+                              )}
                             </div>
                           </div>
 
                           <div
-                            className={`w-5 h-5 rounded-full border flex items-center justify-center flex-shrink-0 transition ${
+                            className={`w-5 h-5 rounded-md border flex items-center justify-center flex-shrink-0 transition ${
                               isSelected
-                                ? 'bg-blue-600 border-blue-500 text-white'
+                                ? 'bg-blue-600 border-blue-500 text-white shadow-sm'
                                 : 'border-slate-600 bg-slate-800'
                             }`}
                           >
-                            {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                            {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                           </div>
                         </div>
 
@@ -352,10 +397,10 @@ export const NewRequest: React.FC = () => {
               <button
                 type="button"
                 onClick={handleContinueToForm}
-                disabled={!selectedTeacherId || teachers.length === 0 || isLoadingTeachers}
+                disabled={selectedTeacherIds.length === 0 || teachers.length === 0 || isLoadingTeachers}
                 className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-900/30 transition flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <span>Continue to Clearance Form</span>
+                <span>Continue to Clearance Form ({selectedTeacherIds.length} Selected)</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>
@@ -365,35 +410,39 @@ export const NewRequest: React.FC = () => {
         {/* ========================================================================= */}
         {/* STEP 2: NO-DUE REQUEST FORM (DISPLAYED AFTER TEACHER SELECTION)            */}
         {/* ========================================================================= */}
-        {currentStep === 'form' && selectedTeacher && (
+        {currentStep === 'form' && selectedTeachers.length > 0 && (
           <form onSubmit={handleSubmit} className="space-y-6 animate-in fade-in">
             {/* Selected Faculty Confirmation Card */}
-            <div className="p-4 rounded-2xl bg-blue-950/30 border border-blue-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-blue-600 text-white flex-shrink-0">
-                  <UserCheck className="w-5 h-5" />
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400">
-                    Selected Faculty Advisor (Responsible Reviewer)
-                  </span>
-                  <p className="font-bold text-sm text-slate-100">
-                    {selectedTeacher.full_name}
-                  </p>
-                  <p className="text-[11px] text-slate-300">
-                    {selectedTeacher.designation || 'Academic Mentor'} • {selectedTeacher.email}
-                  </p>
-                </div>
+            <div className="p-4 rounded-2xl bg-blue-950/30 border border-blue-500/40 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400">
+                  Selected Faculty Advisors ({selectedTeachers.length} Responsible Reviewer{selectedTeachers.length > 1 ? 's' : ''})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep('select_teacher')}
+                  className="px-3 py-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 font-bold text-xs border border-blue-500/40 transition flex items-center gap-1"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Change Selection</span>
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setCurrentStep('select_teacher')}
-                className="px-3 py-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 font-bold text-xs border border-blue-500/40 transition flex items-center gap-1 self-start sm:self-center"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span>Change Selection</span>
-              </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {selectedTeachers.map((t) => (
+                  <div key={t.id} className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-blue-600 text-white flex-shrink-0">
+                      <UserCheck className="w-4 h-4" />
+                    </div>
+                    <div className="overflow-hidden">
+                      <p className="font-bold text-xs text-slate-100 truncate">{t.full_name}</p>
+                      <p className="text-[10px] text-slate-400 truncate">
+                        {t.designation || 'Faculty'} • {t.email}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Automatically Populated Student Details (Non-editable profile review) */}
@@ -482,7 +531,7 @@ export const NewRequest: React.FC = () => {
               </div>
               <p className="text-[11px] text-slate-300 leading-relaxed">
                 Upon clicking <strong>Submit No-Due Request</strong>, your application will be assigned directly to{' '}
-                <strong>{selectedTeacher.full_name}</strong> in the faculty dashboard. You may change your assigned teacher from your student dashboard at any time until your teacher formally begins reviewing your request.
+                <strong>{selectedTeachers.map((t) => t.full_name).join(', ')}</strong> in the faculty dashboard. You may change your assigned faculty from your student dashboard at any time until your teacher formally begins reviewing your request.
               </p>
             </div>
 

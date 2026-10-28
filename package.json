@@ -8,7 +8,11 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "bootstrap:admin": "npx tsx scripts/bootstrap_initial_admin.mjs",
-    "verify:sec30": "npx tsx scripts/verify_sec30_admin_bootstrap.mjs"
+    "verify:sec30": "npx tsx scripts/verify_sec30_admin_bootstrap.mjs",
+    "verify:sec32": "npx tsx scripts/verify_sec32_navigation_isolation.mjs",
+    "verify:sec33": "npx tsx scripts/verify_sec33_faculty_attendance.mjs",
+    "verify:sec34": "npx tsx scripts/verify_sec34_multi_faculty_attendance.mjs",
+    "verify:sec35": "npx tsx scripts/verify_sec35_multi_subject_workflow_gating.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.47.10",

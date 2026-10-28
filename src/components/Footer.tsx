@@ -4,7 +4,8 @@
 // ==============================================================================
 
 import React from 'react';
-import { ShieldCheck, GraduationCap, School } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ShieldCheck } from 'lucide-react';
 
 export const Footer: React.FC = () => {
   return (
@@ -21,9 +22,15 @@ export const Footer: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-4 text-[11px]">
-          <span className="flex items-center gap-1 text-emerald-400/80">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            PostgreSQL & RLS Enforced Security
+          <Link
+            to="/verify"
+            className="text-slate-400 hover:text-slate-200 transition underline underline-offset-4 decoration-slate-700 hover:decoration-slate-400"
+          >
+            Public Verification Lookup
+          </Link>
+          <span>•</span>
+          <span className="text-slate-400">
+            Office of Academic Affairs
           </span>
           <span>•</span>
           <span>All rights reserved &copy; {new Date().getFullYear()}</span>

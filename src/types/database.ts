@@ -158,6 +158,121 @@ export interface SystemSetting {
   updated_at: string;
 }
 
+export interface Subject {
+  id: string;
+  code: string;
+  name: string;
+  department_id: string;
+  department_name: string;
+  semester: number;
+  academic_year: string;
+  credits?: number;
+  created_at: string;
+}
+
+export interface StaffSubjectAssignment {
+  id: string;
+  faculty_id: string;
+  faculty_name: string;
+  subject_id: string;
+  subject_code: string;
+  subject_name: string;
+  department_id: string;
+  semester: number;
+  academic_year: string;
+  created_at: string;
+}
+
+export interface StudentSubjectEnrollment {
+  id: string;
+  student_id: string;
+  subject_id: string;
+  semester: number;
+  academic_year: string;
+  enrolled_at: string;
+}
+
+export interface RequestFacultyAssignment {
+  id: string;
+  request_id: string;
+  faculty_id: string;
+  faculty_name: string;
+  role: 'academic_verification' | 'subject_attendance';
+  subject_id?: string;
+  subject_name?: string;
+  status: 'ASSIGNED' | 'REVIEWING' | 'APPROVED' | 'REJECTED';
+  assigned_at: string;
+  updated_at: string;
+}
+
+export interface FacultyReviewTask {
+  id: string;
+  request_id: string;
+  faculty_id: string;
+  task_type: 'academic_verification' | 'subject_attendance';
+  subject_id?: string;
+  subject_name?: string;
+  status: 'PENDING' | 'COMPLETED';
+  created_at: string;
+  completed_at?: string;
+}
+
+export type SubjectApprovalStatus =
+  | 'WAITING_FOR_ATTENDANCE'
+  | 'AWAITING_APPROVAL'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CORRECTION_REQUIRED';
+
+export interface TeacherApprovalDecision {
+  id: string;
+  request_id: string;
+  subject_record_id: string;
+  subject_id?: string;
+  subject_name: string;
+  faculty_id: string;
+  faculty_name?: string;
+  decision: 'APPROVE' | 'REJECT' | 'CORRECTION_REQUIRED';
+  attendance_percentage?: number | null;
+  classes_held?: number;
+  classes_conducted?: number;
+  classes_attended?: number;
+  remarks?: string;
+  decided_at: string;
+  created_at: string;
+}
+
+export interface SubjectAttendanceRecord {
+  id: string;
+  request_id: string;
+  student_id: string;
+  subject_id?: string;
+  subject_code?: string;
+  subject_name: string;
+  faculty_id: string;
+  faculty_name: string;
+  academic_year: string;
+  semester: number;
+  classes_held?: number; // Total Classes Conducted
+  classes_conducted?: number; // alias
+  classes_attended?: number; // Classes Attended by Student
+  attendance_percentage: number | null;
+  status: 'AWAITING_ENTRY' | 'ENTERED';
+  approval_status?: SubjectApprovalStatus;
+  approved_by?: string;
+  approved_by_name?: string;
+  approved_at?: string;
+  approval_remarks?: string;
+  rejection_remarks?: string;
+  is_locked?: boolean;
+  remarks?: string;
+  entered_at?: string;
+  entered_by?: string;
+  updated_at: string;
+}
+
+export type AttendanceStatusType = 'AWAITING_FACULTY_ENTRY' | 'ATTENDANCE_INCOMPLETE' | 'ENTERED';
+
 export interface StudentAcademicRecord {
   id: string;
   student_id: string;
@@ -167,11 +282,21 @@ export interface StudentAcademicRecord {
   faculty_id: string;
   academic_year: string;
   semester: number;
-  attendance_percentage: number;
-  is_eligible: boolean;
+  attendance_percentage: number | null;
+  is_eligible: boolean | null;
+  attendance_status?: AttendanceStatusType;
+  calculation_method?: 'WEIGHTED_CLASS_COUNT' | 'AVERAGE_PERCENTAGE';
+  calculation_details?: string;
+  total_classes_held?: number;
+  total_classes_attended?: number;
+  subject_approvals_total?: number;
+  subject_approvals_count?: number;
+  all_subject_approvals_completed?: boolean;
+  pending_approval_subjects?: string[];
   academic_remarks?: string;
   verified_at?: string;
   updated_at: string;
+  subject_entries?: SubjectAttendanceRecord[];
 }
 
 export interface PaymentQrConfig {
@@ -257,8 +382,12 @@ export interface TeacherReassignmentRecord {
   request_id: string;
   previous_faculty_id: string;
   previous_faculty_name: string;
+  previous_faculty_ids?: string[];
+  previous_faculty_names?: string[];
   new_faculty_id: string;
   new_faculty_name: string;
+  new_faculty_ids?: string[];
+  new_faculty_names?: string[];
   initiated_by_user_id: string;
   initiated_by_role: 'student' | 'admin';
   reason?: string;
@@ -276,9 +405,13 @@ export interface NoDueRequest {
   semester: number;
   status: RequestStatus;
 
-  // Faculty Assignment Tracking (Section 26)
+  // Faculty Assignment Tracking (Section 26 & Section 34 Multi-Faculty)
   assigned_faculty_id?: string;
   assigned_faculty_name?: string;
+  assigned_faculty_ids?: string[];
+  assigned_faculty_names?: string[];
+  faculty_assignments?: RequestFacultyAssignment[];
+  faculty_review_tasks?: FacultyReviewTask[];
   faculty_assignment_status?: FacultyAssignmentStatus;
   faculty_review_started_at?: string;
   faculty_review_started_by?: string;
@@ -288,6 +421,9 @@ export interface NoDueRequest {
   faculty_status: StageStatus;
   faculty_remarks?: string;
   faculty_reviewed_at?: string;
+  attendance_percentage?: number | null;
+  attendance_status?: AttendanceStatusType;
+  attendance_calculation_method?: 'WEIGHTED_CLASS_COUNT' | 'AVERAGE_PERCENTAGE';
 
   library_status: StageStatus;
   accounts_status: StageStatus;

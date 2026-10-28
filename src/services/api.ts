@@ -22,6 +22,9 @@ import {
   PublicVerificationResult,
   StaffRegistrationParams,
   StaffRoleRequest,
+  SubjectAttendanceRecord,
+  TeacherApprovalDecision,
+  SubjectApprovalStatus,
 } from '../types/database';
 
 export const api = {
@@ -466,7 +469,10 @@ export const api = {
     return Engine.getAcademicRecordForStudent(studentId, year, semester) || null;
   },
 
-  async getFacultyForDepartment(deptIdOrName?: string): Promise<UserProfile[]> {
+  async getFacultyForDepartment(
+    deptIdOrName?: string,
+    period?: { academic_year?: string; semester?: number }
+  ): Promise<UserProfile[]> {
     if (isLiveSupabaseConfigured) {
       let query = supabase
         .from('profiles')
@@ -477,36 +483,65 @@ export const api = {
       if (deptIdOrName) {
         query = query.or(`department_id.eq.${deptIdOrName},department.ilike.%${deptIdOrName}%`);
       }
+      if (period?.semester) {
+        query = query.eq('semester', period.semester);
+      }
       const { data, error } = await query;
       if (error) throw error;
       return (data || []) as UserProfile[];
     }
-    return Engine.getFacultyForDepartment(deptIdOrName);
+    return Engine.getFacultyForDepartment(deptIdOrName, period);
   },
 
   async createNoDueRequest(
-    studentId: string,
-    deptOrYear: string,
-    yearOrSem: string | number,
+    studentIdOrParams: string | {
+      studentId: string;
+      department?: string;
+      academicYear?: string;
+      semester?: number;
+      notes?: string;
+      studyMode?: string;
+      selectedFacultyId?: string | string[];
+    },
+    deptOrYear?: string,
+    yearOrSem?: string | number,
     semOrNotes?: number | string,
     notes?: string,
-    selectedFacultyId?: string
+    selectedFacultyId?: string | string[]
   ): Promise<NoDueRequest> {
-    if (isLiveSupabaseConfigured) {
-      let dept = deptOrYear;
-      let yr = '2026-2027';
-      let sem = 5;
-      let note = notes;
+    let studentId: string;
+    let dept: string = '';
+    let yr: string = '2026-2027';
+    let sem: number = 5;
+    let note: string | undefined = undefined;
+    let facultyId: string | string[] | undefined = undefined;
+
+    if (typeof studentIdOrParams === 'object') {
+      studentId = studentIdOrParams.studentId;
+      const s = Engine.getProfileById(studentId);
+      dept = studentIdOrParams.department || s?.department || '';
+      yr = studentIdOrParams.academicYear || s?.academic_year || '2026-2027';
+      sem = studentIdOrParams.semester || s?.semester || 5;
+      note = studentIdOrParams.notes;
+      facultyId = studentIdOrParams.selectedFacultyId;
+    } else {
+      studentId = studentIdOrParams;
+      facultyId = selectedFacultyId;
       if (typeof yearOrSem === 'number') {
-        yr = deptOrYear;
+        yr = deptOrYear || '2026-2027';
         sem = yearOrSem;
         note = typeof semOrNotes === 'string' ? semOrNotes : undefined;
       } else {
-        dept = deptOrYear;
-        yr = String(yearOrSem);
+        dept = deptOrYear || '';
+        yr = yearOrSem ? String(yearOrSem) : '2026-2027';
         sem = typeof semOrNotes === 'number' ? semOrNotes : 5;
         note = notes;
       }
+    }
+
+    if (isLiveSupabaseConfigured) {
+      const primaryFacultyId = Array.isArray(facultyId) ? facultyId[0] : facultyId;
+      const allFacultyIds = Array.isArray(facultyId) ? facultyId : (facultyId ? [facultyId] : []);
       const payload: any = {
         student_id: studentId,
         department: dept,
@@ -515,8 +550,9 @@ export const api = {
         student_notes: note,
         status: 'PENDING_FACULTY_REVIEW',
       };
-      if (selectedFacultyId) {
-        payload.assigned_faculty_id = selectedFacultyId;
+      if (primaryFacultyId) {
+        payload.assigned_faculty_id = primaryFacultyId;
+        payload.assigned_faculty_ids = allFacultyIds;
       }
       const { data, error } = await supabase
         .from('no_due_requests')
@@ -526,7 +562,7 @@ export const api = {
       if (error) throw error;
       return data as NoDueRequest;
     }
-    return Engine.createRequest(studentId, deptOrYear, yearOrSem, semOrNotes, notes, selectedFacultyId);
+    return Engine.createRequest(studentId, dept || yr, yr, sem, note, facultyId);
   },
 
   async uploadPaymentScreenshot(params: {
@@ -566,31 +602,122 @@ export const api = {
   },
 
   // ----------------------------------------------------------------------------
-  // FACULTY MODULE (Section 6 & 7)
+  // FACULTY MODULE (Section 6 & 7 & 32.C)
   // ----------------------------------------------------------------------------
   async getFacultyDashboardData(facultyId: string) {
+    const faculty = Engine.getProfileById(facultyId);
+    if (!faculty || faculty.role !== 'faculty') {
+      return { requests: [], academicRecords: [], pendingPayments: [], students: [] };
+    }
     const facultyRequests = Engine.getRequestsForFaculty(facultyId);
     const assignedStudentIds = new Set(facultyRequests.map((r) => r.student_id));
     const allProfiles = Engine.getProfiles();
+    // Exclude unrelated departmental student records (Section 32.C)
     const students = allProfiles.filter(
-      (p) => p.role === 'student' && (p.assigned_faculty_id === facultyId || assignedStudentIds.has(p.id))
+      (p) =>
+        p.role === 'student' &&
+        Engine.isDepartmentMatch(faculty.department_id || faculty.department, p.department_id || p.department) &&
+        (p.assigned_faculty_id === facultyId || assignedStudentIds.has(p.id))
     );
     const studentIds = new Set(students.map((s) => s.id));
 
     const academicRecords = Engine.getAcademicRecords().filter(
-      (r) => r.faculty_id === facultyId || studentIds.has(r.student_id)
+      (r) => studentIds.has(r.student_id)
     );
     const allPayments = Engine.getPayments();
     const pendingPayments = allPayments.filter(
       (p) => p.verification_status === 'PENDING_REVIEW' && studentIds.has(p.student_id)
     );
 
+    const subjectAttendanceRecords = Engine.getSubjectAttendanceForFaculty(facultyId);
+
     return {
       requests: facultyRequests,
       academicRecords,
       pendingPayments,
       students,
+      subjectAttendanceRecords,
     };
+  },
+
+  async getSubjectAttendanceForStudent(studentId: string, requestId?: string): Promise<SubjectAttendanceRecord[]> {
+    return Engine.getSubjectAttendanceForStudent(studentId, requestId);
+  },
+
+  async getSubjectAttendanceForFaculty(facultyId: string): Promise<SubjectAttendanceRecord[]> {
+    return Engine.getSubjectAttendanceForFaculty(facultyId);
+  },
+
+  async recordSubjectAttendance(params: {
+    subjectRecordId: string;
+    attendancePercentage?: number;
+    classesHeld?: number;
+    classesAttended?: number;
+    remarks?: string;
+    facultyId: string;
+  }): Promise<{ subjectRecord: SubjectAttendanceRecord; academicRecord: StudentAcademicRecord }> {
+    return Engine.recordSubjectAttendance(params);
+  },
+
+  async processSubjectTeacherDecision(params: {
+    subjectRecordId: string;
+    facultyId: string;
+    decision: 'APPROVE' | 'REJECT' | 'CORRECTION_REQUIRED';
+    remarks?: string;
+  }): Promise<{ subjectRecord: SubjectAttendanceRecord; request: NoDueRequest }> {
+    return Engine.processSubjectTeacherDecision(params);
+  },
+
+  async approveSubjectAttendance(
+    subjectRecordId: string,
+    facultyId: string,
+    remarks?: string
+  ): Promise<{ subjectRecord: SubjectAttendanceRecord; request: NoDueRequest }> {
+    return Engine.processSubjectTeacherDecision({
+      subjectRecordId,
+      facultyId,
+      decision: 'APPROVE',
+      remarks,
+    });
+  },
+
+  async rejectSubjectAttendance(
+    subjectRecordId: string,
+    facultyId: string,
+    remarks?: string
+  ): Promise<{ subjectRecord: SubjectAttendanceRecord; request: NoDueRequest }> {
+    return Engine.processSubjectTeacherDecision({
+      subjectRecordId,
+      facultyId,
+      decision: 'REJECT',
+      remarks,
+    });
+  },
+
+  async requestSubjectAttendanceCorrection(
+    subjectRecordId: string,
+    facultyId: string,
+    remarks?: string
+  ): Promise<{ subjectRecord: SubjectAttendanceRecord; request: NoDueRequest }> {
+    return Engine.processSubjectTeacherDecision({
+      subjectRecordId,
+      facultyId,
+      decision: 'CORRECTION_REQUIRED',
+      remarks,
+    });
+  },
+
+  async getTeacherApprovalDecisions(requestId?: string, subjectRecordId?: string): Promise<TeacherApprovalDecision[]> {
+    return Engine.getTeacherApprovalDecisions(requestId, subjectRecordId);
+  },
+
+  async recalculateOverallAttendance(
+    studentId: string,
+    academicYear: string,
+    semester: number,
+    requestId?: string
+  ): Promise<StudentAcademicRecord> {
+    return Engine.recalculateOverallAttendance(studentId, academicYear, semester, requestId);
   },
 
   async assignFacultyToRequest(requestId: string, facultyId: string, adminId: string, reason?: string): Promise<NoDueRequest> {
@@ -603,7 +730,8 @@ export const api = {
 
   async reassignTeacher(params: {
     requestId: string;
-    newFacultyId: string;
+    newFacultyId?: string;
+    newFacultyIds?: string[];
     userId: string;
     role: 'student' | 'admin';
     reason?: string;
@@ -611,11 +739,27 @@ export const api = {
     return Engine.reassignTeacher(params);
   },
 
+  async getSubjects(departmentIdOrName?: string, semester?: number, academicYear?: string) {
+    return Engine.getSubjects(departmentIdOrName, semester, academicYear);
+  },
+
+  async getRequestFacultyAssignments(requestId?: string, facultyId?: string) {
+    return Engine.getRequestFacultyAssignments(requestId, facultyId);
+  },
+
+  async getFacultyReviewTasks(facultyId?: string, requestId?: string) {
+    return Engine.getFacultyReviewTasks(facultyId, requestId);
+  },
+
   async updateStudentAttendance(recordId: string, attendance: number, remarks: string, facultyId: string): Promise<StudentAcademicRecord> {
     return Engine.updateAcademicRecord(recordId, attendance, remarks, facultyId);
   },
 
   async approveFacultyAcademic(requestId: string, facultyId: string, remarks: string): Promise<NoDueRequest> {
+    return Engine.verifyFacultyApproval(requestId, facultyId, remarks);
+  },
+
+  async verifyFacultyApproval(requestId: string, facultyId: string, remarks: string): Promise<NoDueRequest> {
     return Engine.verifyFacultyApproval(requestId, facultyId, remarks);
   },
 
@@ -647,29 +791,10 @@ export const api = {
   },
 
   // ----------------------------------------------------------------------------
-  // CLEARANCE AUTHORITIES (Library, Accounts, Laboratory) (Section 8 & 9)
+  // CLEARANCE AUTHORITIES (Library, Accounts, Laboratory) (Section 8, 9 & 32.C)
   // ----------------------------------------------------------------------------
-  async getAuthorityClearanceData(authority: 'library' | 'accounts' | 'lab') {
-    const items = Engine.getClearanceItems().filter((ci) => ci.authority === authority);
-    const requests = Engine.getRequests();
-    const payments = Engine.getPayments();
-
-    const itemsWithDetails = items.map((item) => {
-      const req = requests.find((r) => r.id === item.request_id);
-      const sub = payments.find((p) => p.clearance_item_id === item.id);
-      return {
-        ...item,
-        request: req,
-        latest_submission: sub,
-      };
-    });
-
-    const activeQr = Engine.getActiveQrForAuthority(authority) || null;
-
-    return {
-      items: itemsWithDetails,
-      activeQr,
-    };
+  async getAuthorityClearanceData(authority: 'library' | 'accounts' | 'lab', userId?: string) {
+    return Engine.getClearanceDataForAuthority(authority, userId);
   },
 
   async processClearanceDecision(params: {
@@ -687,10 +812,11 @@ export const api = {
   },
 
   // ----------------------------------------------------------------------------
-  // HOD MODULE (Section 6 & 14)
+  // HOD MODULE (Section 6, 14 & 32.C)
   // ----------------------------------------------------------------------------
-  async getHodDashboardData(): Promise<NoDueRequest[]> {
-    return Engine.getRequests();
+  async getHodDashboardData(hodId?: string): Promise<NoDueRequest[]> {
+    if (!hodId) return Engine.getRequests();
+    return Engine.getRequestsForHod(hodId);
   },
 
   async processHodFinalClearance(params: {
